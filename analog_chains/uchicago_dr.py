@@ -1,0 +1,44 @@
+from hidfmux.core.resources.analog_chain import AnalogChain
+import hidfmux.core.resources.hardware_models as hardware_models
+import hidfmux.core.utils.transferfunctions as transferfunctions
+from hidfmux.core.utils.transferfunctions import to_dbm, to_W
+
+
+
+class UChicago_DR(AnalogChain):
+    '''
+    Simple representation of the UChicago dilution fridge, with estimates for input
+    and output gain of the total system (cryogenic and warm).
+    '''
+    
+    def __init__(self):
+
+        self.ad9082 = hardware_models.AD9082()
+                
+        
+    def input_gain(self, carrier_freq):
+        '''
+        No warm attenuation, just the estimated cold attenuation and cable losses.
+        '''
+         
+        return -50
+    
+    
+    def return_gain(self, carrier_freq):
+        '''
+        Estimated gain for cryo LNA, 1 warm amplifier (ZX60-2534MA+), some cable losses
+        '''
+        return 70
+    
+    
+    def output_noise(self, carrier_freq, spectral_freq, carrier_power_dbm):
+        
+        n_dac = self.ad9082.dac_noise(spectral_freq, carrier_power_dbm)
+        n_dac_output = to_dbm(n_dac) + self.input_gain(carrier_freq) + self.return_gain(carrier_freq)
+        
+        n_adc = self.ad9082.adc_noise()
+        
+        # totals at output:
+        noise_total = to_W(n_dac_output) + n_adc
+        
+        return noise_total
