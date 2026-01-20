@@ -27,6 +27,7 @@ import matplotlib
 matplotlib.use('Qt5Agg')
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.figure import Figure
+from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
 
 import hardware_models
 from signal_chain import SignalChain
@@ -325,6 +326,323 @@ class ChainView(QWidget):
         """Return the current SignalChain object."""
         self._rebuild_chain()
         return self.chain
+
+
+class DiagramDisplayDialog(QDialog):
+    """
+    Dialog for displaying generated signal chain diagrams with save functionality.
+    """
+    
+    def __init__(self, chain, parent=None):
+        super().__init__(parent)
+        
+        self.chain = chain
+        self.setWindowTitle("Signal Chain Diagram")
+        self.setGeometry(150, 150, 1000, 700)
+        
+        layout = QVBoxLayout(self)
+        
+        # Parameter input section
+        param_group = QGroupBox("Diagram Options")
+        param_layout = QFormLayout()
+        
+        # Frequency for gain/noise display
+        self.frequency_spin = QDoubleSpinBox()
+        self.frequency_spin.setRange(0.001, 1000)
+        self.frequency_spin.setValue(1.0)
+        self.frequency_spin.setSuffix(" GHz")
+        self.frequency_spin.setDecimals(3)
+        param_layout.addRow("Frequency:", self.frequency_spin)
+        
+        # Show gain checkbox
+        self.show_gain_check = QCheckBox("Show component gain values")
+        self.show_gain_check.setChecked(True)
+        param_layout.addRow("", self.show_gain_check)
+        
+        # Show noise checkbox
+        self.show_noise_check = QCheckBox("Show component noise values")
+        self.show_noise_check.setChecked(False)
+        param_layout.addRow("", self.show_noise_check)
+        
+        param_group.setLayout(param_layout)
+        layout.addWidget(param_group)
+        
+        # Generate button
+        generate_button = QPushButton("Generate Diagram")
+        generate_button.clicked.connect(self._generate_diagram)
+        layout.addWidget(generate_button)
+        
+        # Matplotlib figure
+        self.figure = Figure(figsize=(10, 6))
+        self.canvas = FigureCanvasQTAgg(self.figure)
+        self.toolbar = NavigationToolbar2QT(self.canvas, self)
+        
+        layout.addWidget(self.toolbar)
+        layout.addWidget(self.canvas)
+        
+        # Action buttons
+        button_layout = QHBoxLayout()
+        
+        save_button = QPushButton("Save Diagram")
+        save_button.clicked.connect(self._save_diagram)
+        button_layout.addWidget(save_button)
+        
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(self.accept)
+        button_layout.addWidget(close_button)
+        
+        layout.addLayout(button_layout)
+        
+        # Generate initial diagram
+        self._generate_diagram()
+        
+    def _generate_diagram(self):
+        """Generate and display the diagram."""
+        try:
+            frequency = self.frequency_spin.value() * 1e9  # Convert to Hz
+            show_gain = self.show_gain_check.isChecked()
+            show_noise = self.show_noise_check.isChecked()
+            
+            # Clear figure
+            self.figure.clear()
+            
+            # Get axis
+            ax = self.figure.add_subplot(111)
+            ax.set_xlim(0, 10)
+            ax.set_ylim(0, 10)
+            ax.axis('off')
+            
+            # Title
+            ax.text(5, 9.5, self.chain.name, ha='center', va='top', 
+                    fontsize=16, fontweight='bold')
+            
+            n_components = len(self.chain.components)
+            if n_components == 0:
+                ax.text(5, 5, "Empty signal chain", ha='center', va='center', 
+                        fontsize=12, style='italic')
+                self.canvas.draw()
+                return
+            
+            # Calculate layout
+            box_width = 8.0 / max(n_components, 1)
+            box_width = min(box_width, 1.5)  # Max width
+            spacing = 8.0 / max(n_components - 1, 1) if n_components > 1 else 0
+            
+            start_x = 1.0
+            y_center = 5.0
+            box_height = 1.2
+            
+            # Draw components
+            for idx, component in enumerate(self.chain.components):
+                x = start_x + idx * spacing
+                
+                # Get component info
+                label = self.chain._get_label_for_index(idx)
+                comp_type = getattr(component, 'component_type', 'generic')
+                
+                # Choose color based on type
+                if comp_type == 'active':
+                    color = '#90EE90'  # Light green
+                elif comp_type == 'passive':
+                    color = '#ADD8E6'  # Light blue
+                else:
+                    color = '#F0F0F0'  # Light gray
+                
+                # Draw box
+                box = FancyBboxPatch(
+                    (x - box_width/2, y_center - box_height/2),
+                    box_width, box_height,
+                    boxstyle="round,pad=0.1",
+                    edgecolor='black',
+                    facecolor=color,
+                    linewidth=1.5
+                )
+                ax.add_patch(box)
+                
+                # Component name (shortened if needed)
+                display_name = label if len(label) <= 15 else label[:12] + "..."
+                ax.text(x, y_center + 0.1, display_name, ha='center', va='center',
+                        fontsize=8, fontweight='bold')
+                
+                # Add gain if requested
+                if show_gain and hasattr(component, 'gain'):
+                    gain_val = component.gain(frequency)
+                    gain_text = f"{gain_val:+.1f} dB"
+                    ax.text(x, y_center - 0.3, gain_text, ha='center', va='center',
+                            fontsize=7, color='blue')
+                
+                # Add noise if requested
+                if show_noise and hasattr(component, 'noise'):
+                    noise_val = component.noise(frequency)
+                    if noise_val > 0:
+                        # Show noise temperature if thermal
+                        if hasattr(component, 'temperature'):
+                            noise_text = f"T={component.temperature}K"
+                        else:
+                            noise_text = f"{noise_val:.1e} W/Hz"
+                        ax.text(x, y_center - 0.5, noise_text, ha='center', va='center',
+                                fontsize=6, color='red', style='italic')
+                
+                # Draw arrow to next component
+                if idx < n_components - 1:
+                    next_x = start_x + (idx + 1) * spacing
+                    arrow = FancyArrowPatch(
+                        (x + box_width/2 + 0.05, y_center),
+                        (next_x - box_width/2 - 0.05, y_center),
+                        arrowstyle='->,head_width=0.3,head_length=0.2',
+                        color='black',
+                        linewidth=2
+                    )
+                    ax.add_patch(arrow)
+            
+            # Add summary statistics
+            if show_gain:
+                total_gain = self.chain.total_gain(frequency)
+                ax.text(5, 1.5, f"Total Gain: {total_gain:+.1f} dB @ {frequency/1e9:.3f} GHz",
+                        ha='center', va='center', fontsize=10, 
+                        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+            
+            if show_noise:
+                spectral_frequency = 1e3  # 1 kHz offset
+                total_noise = self.chain.output_noise(frequency, spectral_frequency)
+                ax.text(5, 0.8, f"Output Noise: {total_noise:.2e} W/Hz @ {frequency/1e9:.3f} GHz (offset: {spectral_frequency/1e3:.1f} kHz)",
+                        ha='center', va='center', fontsize=9,
+                        bbox=dict(boxstyle='round', facecolor='lightcoral', alpha=0.5))
+            
+            self.figure.tight_layout()
+            self.canvas.draw()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Generation Error", 
+                               f"Failed to generate diagram:\n{str(e)}")
+    
+    def _save_diagram(self):
+        """Save the current diagram."""
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Diagram", "chain_diagram.pdf", 
+            "PDF Files (*.pdf);;PNG Files (*.png);;SVG Files (*.svg)"
+        )
+        
+        if not file_path:
+            return
+        
+        try:
+            self.figure.savefig(file_path, dpi=300, bbox_inches='tight')
+            QMessageBox.information(self, "Success", f"Diagram saved to:\n{file_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Save Error", f"Failed to save diagram:\n{str(e)}")
+
+
+class SummaryDisplayDialog(QDialog):
+    """
+    Dialog for displaying chain summary with save functionality.
+    """
+    
+    def __init__(self, chain, parent=None):
+        super().__init__(parent)
+        
+        self.chain = chain
+        self.setWindowTitle("Chain Summary")
+        self.setGeometry(200, 200, 800, 600)
+        
+        layout = QVBoxLayout(self)
+        
+        # Title
+        title_label = QLabel("Signal Chain Summary")
+        title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        layout.addWidget(title_label)
+        
+        # Text display area
+        from PySide6.QtWidgets import QTextEdit
+        self.text_display = QTextEdit()
+        self.text_display.setReadOnly(True)
+        self.text_display.setFont(QApplication.font())
+        self.text_display.setStyleSheet("font-family: monospace; padding: 10px;")
+        layout.addWidget(self.text_display)
+        
+        # Generate summary
+        self._generate_summary()
+        
+        # Action buttons
+        button_layout = QHBoxLayout()
+        
+        save_button = QPushButton("Save Summary")
+        save_button.clicked.connect(self._save_summary)
+        button_layout.addWidget(save_button)
+        
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(self.accept)
+        button_layout.addWidget(close_button)
+        
+        layout.addLayout(button_layout)
+        
+    def _generate_summary(self):
+        """Generate summary text."""
+        try:
+            # Build summary text
+            summary = f"Signal Chain: {self.chain.name}\n"
+            summary += f"Total components: {len(self.chain)}\n\n"
+            summary += "Component List:\n"
+            summary += "=" * 80 + "\n"
+            
+            for idx, component in enumerate(self.chain.components):
+                comp_name = component.__class__.__name__
+                label = self.chain._get_label_for_index(idx)
+                comp_type = getattr(component, 'component_type', 'unknown')
+                
+                summary += f"  [{idx:2d}] {label}\n"
+                summary += f"       Type: {comp_type}\n"
+                
+                # Add relevant parameters
+                if hasattr(component, 'temperature'):
+                    summary += f"       Temperature: {component.temperature} K\n"
+                if hasattr(component, 'length'):
+                    summary += f"       Length: {component.length} m\n"
+                if hasattr(component, 'attenuation'):
+                    summary += f"       Attenuation: {component.attenuation} dB\n"
+                
+                summary += "\n"
+            
+            summary += "=" * 80 + "\n"
+            
+            # Add gain calculation at a reference frequency
+            ref_freq = 1e9  # 1 GHz
+            try:
+                total_gain = self.chain.total_gain(ref_freq)
+                summary += f"\nTotal Gain @ {ref_freq/1e9:.2f} GHz: {total_gain:+.2f} dB\n"
+            except Exception as e:
+                summary += f"\nTotal Gain calculation: Error - {str(e)}\n"
+            
+            # Add noise calculation
+            try:
+                spectral_freq = 1e3  # 1 kHz
+                output_noise = self.chain.output_noise(ref_freq, spectral_freq)
+                summary += f"Output Noise @ {ref_freq/1e9:.2f} GHz ({spectral_freq/1e3:.1f} kHz offset): {output_noise:.2e} W/Hz\n"
+            except Exception as e:
+                summary += f"Output Noise calculation: Error - {str(e)}\n"
+            
+            self.text_display.setPlainText(summary)
+            
+        except Exception as e:
+            self.text_display.setPlainText(f"Error generating summary:\n{str(e)}")
+    
+    def _save_summary(self):
+        """Save the summary to a text file."""
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Summary", "chain_summary.txt", 
+            "Text Files (*.txt);;All Files (*)"
+        )
+        
+        if not file_path:
+            return
+        
+        try:
+            with open(file_path, 'w') as f:
+                f.write(self.text_display.toPlainText())
+            
+            QMessageBox.information(self, "Success", f"Summary saved to:\n{file_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Save Error", f"Failed to save summary:\n{str(e)}")
 
 
 class GainAnalysisDialog(QDialog):
@@ -1014,25 +1332,9 @@ class MainWindow(QMainWindow):
             )
             return
         
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Diagram", "chain_diagram.pdf", "PDF Files (*.pdf)"
-        )
-        
-        if not file_path:
-            return
-        
-        try:
-            diagram_gen = DiagramGenerator(chain)
-            diagram_gen.generate(filename=file_path, frequency=1e9, show_gain=False)
-            QMessageBox.information(
-                self, "Success",
-                f"Diagram generated successfully!\n\nSaved to: {file_path}"
-            )
-        except Exception as e:
-            QMessageBox.critical(
-                self, "Error",
-                f"Failed to generate diagram:\n{str(e)}"
-            )
+        # Show diagram in a dialog with save functionality
+        dialog = DiagramDisplayDialog(chain, self)
+        dialog.exec()
             
     def _show_summary(self):
         """Display chain summary information."""
@@ -1045,23 +1347,9 @@ class MainWindow(QMainWindow):
             )
             return
         
-        # Build summary text
-        summary = f"Signal Chain: {chain.name}\n"
-        summary += f"Total components: {len(chain)}\n\n"
-        summary += "Component List:\n"
-        summary += "-" * 60 + "\n"
-        
-        for idx, component in enumerate(chain.components):
-            summary += f"  [{idx:2d}] {component.__class__.__name__}\n"
-        
-        summary += "-" * 60 + "\n"
-        
-        # Show in message box
-        msg_box = QMessageBox(self)
-        msg_box.setWindowTitle("Chain Summary")
-        msg_box.setText(summary)
-        msg_box.setFont(msg_box.font())
-        msg_box.exec()
+        # Show summary in a dialog with save functionality
+        dialog = SummaryDisplayDialog(chain, self)
+        dialog.exec()
         
     def _show_gain_analysis(self):
         """Show gain analysis dialog."""
