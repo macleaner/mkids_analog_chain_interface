@@ -875,6 +875,20 @@ class MainWindow(QMainWindow):
         diagram_action.triggered.connect(self._generate_diagram)
         toolbar.addAction(diagram_action)
         
+        summary_action = QAction("Show Chain Summary", self)
+        summary_action.triggered.connect(self._show_summary)
+        toolbar.addAction(summary_action)
+        
+        toolbar.addSeparator()
+        
+        gain_analysis_action = QAction("Analyze Gain vs Frequency", self)
+        gain_analysis_action.triggered.connect(self._show_gain_analysis)
+        toolbar.addAction(gain_analysis_action)
+        
+        noise_analysis_action = QAction("Analyze Noise Spectrum", self)
+        noise_analysis_action.triggered.connect(self._show_noise_analysis)
+        toolbar.addAction(noise_analysis_action)
+        
     def _on_component_selected(self, category, comp_class):
         """Handle component selection from library."""
         self.param_panel.set_component(comp_class)
