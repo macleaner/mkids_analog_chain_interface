@@ -58,17 +58,17 @@ class MainWindow(QMainWindow):
         self.library.component_selected.connect(self._on_component_selected)
         splitter.addWidget(self.library)
         
-        # Middle: Chain view
-        self.chain_view = ChainView()
-        splitter.addWidget(self.chain_view)
-        
-        # Right: Parameter panel
+        # Middle: Parameter panel
         self.param_panel = ParameterPanel()
         self.param_panel.add_component.connect(self._on_add_component)
         splitter.addWidget(self.param_panel)
         
+        # Right: Chain view
+        self.chain_view = ChainView()
+        splitter.addWidget(self.chain_view)
+        
         # Set splitter proportions
-        splitter.setSizes([300, 400, 300])
+        splitter.setSizes([300, 300, 400])
         
         main_layout.addWidget(splitter)
         
