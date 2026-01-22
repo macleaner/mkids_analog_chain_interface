@@ -1,7 +1,7 @@
 """
-Diagram Display Dialog
+Diagram Panel
 
-Dialog for displaying generated signal chain diagrams with save functionality.
+Embeddable widget for displaying signal chain diagrams.
 """
 
 import matplotlib
@@ -11,24 +11,31 @@ from matplotlib.figure import Figure
 from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
 
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QFormLayout,
-    QPushButton, QDoubleSpinBox, QCheckBox, QMessageBox, QFileDialog
+    QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QFormLayout,
+    QPushButton, QDoubleSpinBox, QCheckBox, QMessageBox, QFileDialog, QLabel
 )
+from PySide6.QtCore import Qt
 
 
-class DiagramDisplayDialog(QDialog):
+class DiagramPanel(QWidget):
     """
-    Dialog for displaying generated signal chain diagrams with save functionality.
+    Embeddable widget for displaying signal chain diagrams.
     """
     
-    def __init__(self, chain, parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
         
-        self.chain = chain
-        self.setWindowTitle("Signal Chain Diagram")
-        self.setGeometry(150, 150, 1000, 700)
+        self.chain = None
+        self._setup_ui()
         
-        layout = QVBoxLayout(self)
+    def _setup_ui(self):
+        """Set up the UI layout."""
+        # Main horizontal layout: parameters on left, diagram on right
+        main_layout = QHBoxLayout(self)
+        
+        # Left side: Parameter controls
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
         
         # Parameter input section
         param_group = QGroupBox("Diagram Options")
@@ -53,39 +60,52 @@ class DiagramDisplayDialog(QDialog):
         param_layout.addRow("", self.show_noise_check)
         
         param_group.setLayout(param_layout)
-        layout.addWidget(param_group)
+        left_layout.addWidget(param_group)
         
-        # Generate button
+        # Buttons in left column
         generate_button = QPushButton("Generate Diagram")
-        generate_button.clicked.connect(self._generate_diagram)
-        layout.addWidget(generate_button)
-        
-        # Matplotlib figure
-        self.figure = Figure(figsize=(10, 6))
-        self.canvas = FigureCanvasQTAgg(self.figure)
-        self.toolbar = NavigationToolbar2QT(self.canvas, self)
-        
-        layout.addWidget(self.toolbar)
-        layout.addWidget(self.canvas)
-        
-        # Action buttons
-        button_layout = QHBoxLayout()
+        generate_button.clicked.connect(self.generate_diagram)
+        left_layout.addWidget(generate_button)
         
         save_button = QPushButton("Save Diagram")
         save_button.clicked.connect(self._save_diagram)
-        button_layout.addWidget(save_button)
+        left_layout.addWidget(save_button)
         
-        close_button = QPushButton("Close")
-        close_button.clicked.connect(self.accept)
-        button_layout.addWidget(close_button)
+        left_layout.addStretch()
         
-        layout.addLayout(button_layout)
+        # Set a maximum width for the left panel
+        left_widget.setMaximumWidth(350)
         
-        # Generate initial diagram
-        self._generate_diagram()
+        # Right side: Diagram
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(0, 0, 0, 0)
         
-    def _generate_diagram(self):
+        # Matplotlib figure
+        self.figure = Figure(figsize=(10, 5))
+        self.canvas = FigureCanvasQTAgg(self.figure)
+        self.toolbar = NavigationToolbar2QT(self.canvas, self)
+        
+        right_layout.addWidget(self.toolbar)
+        right_layout.addWidget(self.canvas)
+        
+        # Add left and right to main layout
+        main_layout.addWidget(left_widget)
+        main_layout.addWidget(right_widget)
+        
+        # Show empty state initially
+        self._show_empty_state()
+        
+    def set_chain(self, chain):
+        """Set the signal chain to display."""
+        self.chain = chain
+        
+    def generate_diagram(self):
         """Generate and display the diagram."""
+        if self.chain is None or len(self.chain.components) == 0:
+            self._show_empty_state()
+            return
+            
         try:
             frequency = self.frequency_spin.value() * 1e9  # Convert to Hz
             show_gain = self.show_gain_check.isChecked()
@@ -105,11 +125,6 @@ class DiagramDisplayDialog(QDialog):
                     fontsize=16, fontweight='bold')
             
             n_components = len(self.chain.components)
-            if n_components == 0:
-                ax.text(5, 5, "Empty signal chain", ha='center', va='center', 
-                        fontsize=12, style='italic')
-                self.canvas.draw()
-                return
             
             # Calculate layout
             box_width = 8.0 / max(n_components, 1)
@@ -204,8 +219,23 @@ class DiagramDisplayDialog(QDialog):
             QMessageBox.critical(self, "Generation Error", 
                                f"Failed to generate diagram:\n{str(e)}")
     
+    def _show_empty_state(self):
+        """Show empty state message."""
+        self.figure.clear()
+        ax = self.figure.add_subplot(111)
+        ax.set_xlim(0, 10)
+        ax.set_ylim(0, 10)
+        ax.axis('off')
+        ax.text(5, 5, "Add components to the chain and click\n'Generate Diagram' to see the chain diagram here.",
+                ha='center', va='center', fontsize=12, style='italic', color='gray')
+        self.canvas.draw()
+    
     def _save_diagram(self):
         """Save the current diagram."""
+        if self.chain is None or len(self.chain.components) == 0:
+            QMessageBox.warning(self, "No Diagram", "Please generate a diagram first.")
+            return
+            
         file_path, _ = QFileDialog.getSaveFileName(
             self, "Save Diagram", "chain_diagram.pdf", 
             "PDF Files (*.pdf);;PNG Files (*.png);;SVG Files (*.svg)"

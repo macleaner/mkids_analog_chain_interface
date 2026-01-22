@@ -8,8 +8,8 @@ import sys
 import json
 import inspect
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QSplitter,
-    QMessageBox, QFileDialog, QToolBar
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
+    QMessageBox, QFileDialog, QToolBar, QTabWidget
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
@@ -19,12 +19,8 @@ import hardware_models
 from .component_library import ComponentLibrary
 from .chain_view import ChainView
 from .parameter_panel import ParameterPanel
-from .dialogs import (
-    DiagramDisplayDialog,
-    SummaryDisplayDialog,
-    GainAnalysisDialog,
-    NoiseAnalysisDialog
-)
+from .diagram_panel import DiagramPanel
+from .results_panel import ResultsPanel
 
 
 class MainWindow(QMainWindow):
@@ -36,7 +32,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         
         self.setWindowTitle("Analog Chain Builder")
-        self.setGeometry(100, 100, 1200, 700)
+        self.setGeometry(100, 100, 1200, 900)
         
         self._setup_ui()
         self._create_menu_bar()
@@ -45,32 +41,59 @@ class MainWindow(QMainWindow):
     def _setup_ui(self):
         """Set up the main UI layout."""
         
-        # Central widget with splitter
+        # Central widget with vertical splitter
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         
-        main_layout = QHBoxLayout(central_widget)
+        main_layout = QVBoxLayout(central_widget)
         
-        splitter = QSplitter(Qt.Horizontal)
+        # Main vertical splitter (top: controls, bottom: results)
+        main_splitter = QSplitter(Qt.Vertical)
+        
+        # Top section: horizontal 3-panel layout
+        top_widget = QWidget()
+        top_layout = QHBoxLayout(top_widget)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        
+        top_splitter = QSplitter(Qt.Horizontal)
         
         # Left: Component library
         self.library = ComponentLibrary()
         self.library.component_selected.connect(self._on_component_selected)
-        splitter.addWidget(self.library)
+        top_splitter.addWidget(self.library)
         
         # Middle: Parameter panel
         self.param_panel = ParameterPanel()
         self.param_panel.add_component.connect(self._on_add_component)
-        splitter.addWidget(self.param_panel)
+        top_splitter.addWidget(self.param_panel)
         
         # Right: Chain view
         self.chain_view = ChainView()
-        splitter.addWidget(self.chain_view)
+        top_splitter.addWidget(self.chain_view)
         
-        # Set splitter proportions
-        splitter.setSizes([300, 300, 400])
+        # Set top splitter proportions
+        top_splitter.setSizes([300, 300, 400])
         
-        main_layout.addWidget(splitter)
+        top_layout.addWidget(top_splitter)
+        main_splitter.addWidget(top_widget)
+        
+        # Bottom section: tabbed results area
+        self.results_tabs = QTabWidget()
+        
+        # Diagram tab
+        self.diagram_panel = DiagramPanel()
+        self.results_tabs.addTab(self.diagram_panel, "Diagram")
+        
+        # Results tab (gain + noise)
+        self.results_panel = ResultsPanel()
+        self.results_tabs.addTab(self.results_panel, "Analysis Results")
+        
+        main_splitter.addWidget(self.results_tabs)
+        
+        # Set main splitter proportions (40% top, 60% bottom)
+        main_splitter.setSizes([400, 600])
+        
+        main_layout.addWidget(main_splitter)
         
     def _create_menu_bar(self):
         """Create the menu bar."""
@@ -110,19 +133,11 @@ class MainWindow(QMainWindow):
         diagram_action.triggered.connect(self._generate_diagram)
         tools_menu.addAction(diagram_action)
         
-        summary_action = QAction("Show Chain &Summary", self)
-        summary_action.triggered.connect(self._show_summary)
-        tools_menu.addAction(summary_action)
-        
         tools_menu.addSeparator()
         
-        gain_analysis_action = QAction("Analyze &Gain vs Frequency...", self)
-        gain_analysis_action.triggered.connect(self._show_gain_analysis)
-        tools_menu.addAction(gain_analysis_action)
-        
-        noise_analysis_action = QAction("Analyze &Noise Spectrum...", self)
-        noise_analysis_action.triggered.connect(self._show_noise_analysis)
-        tools_menu.addAction(noise_analysis_action)
+        analyze_action = QAction("&Analyze Chain (Gain + Noise)...", self)
+        analyze_action.triggered.connect(self._analyze_chain)
+        tools_menu.addAction(analyze_action)
         
         # Help menu
         help_menu = menubar.addMenu("&Help")
@@ -150,19 +165,9 @@ class MainWindow(QMainWindow):
         diagram_action.triggered.connect(self._generate_diagram)
         toolbar.addAction(diagram_action)
         
-        summary_action = QAction("Show Chain Summary", self)
-        summary_action.triggered.connect(self._show_summary)
-        toolbar.addAction(summary_action)
-        
-        toolbar.addSeparator()
-        
-        gain_analysis_action = QAction("Analyze Gain vs Frequency", self)
-        gain_analysis_action.triggered.connect(self._show_gain_analysis)
-        toolbar.addAction(gain_analysis_action)
-        
-        noise_analysis_action = QAction("Analyze Noise Spectrum", self)
-        noise_analysis_action.triggered.connect(self._show_noise_analysis)
-        toolbar.addAction(noise_analysis_action)
+        analyze_action = QAction("Analyze Chain", self)
+        analyze_action.triggered.connect(self._analyze_chain)
+        toolbar.addAction(analyze_action)
         
     def _on_component_selected(self, category, comp_class):
         """Handle component selection from library."""
@@ -289,12 +294,13 @@ class MainWindow(QMainWindow):
             )
             return
         
-        # Show diagram in a dialog with save functionality
-        dialog = DiagramDisplayDialog(chain, self)
-        dialog.exec()
+        # Update diagram panel and switch to diagram tab
+        self.diagram_panel.set_chain(chain)
+        self.diagram_panel.generate_diagram()
+        self.results_tabs.setCurrentIndex(0)  # Switch to diagram tab
             
-    def _show_summary(self):
-        """Display chain summary information."""
+    def _analyze_chain(self):
+        """Analyze the chain (gain and noise)."""
         chain = self.chain_view.get_chain()
         
         if len(chain) == 0:
@@ -304,37 +310,10 @@ class MainWindow(QMainWindow):
             )
             return
         
-        # Show summary in a dialog with save functionality
-        dialog = SummaryDisplayDialog(chain, self)
-        dialog.exec()
-        
-    def _show_gain_analysis(self):
-        """Show gain analysis dialog."""
-        chain = self.chain_view.get_chain()
-        
-        if len(chain) == 0:
-            QMessageBox.information(
-                self, "Empty Chain",
-                "Please add components to the chain first."
-            )
-            return
-        
-        dialog = GainAnalysisDialog(chain, self)
-        dialog.exec()
-    
-    def _show_noise_analysis(self):
-        """Show noise analysis dialog."""
-        chain = self.chain_view.get_chain()
-        
-        if len(chain) == 0:
-            QMessageBox.information(
-                self, "Empty Chain",
-                "Please add components to the chain first."
-            )
-            return
-        
-        dialog = NoiseAnalysisDialog(chain, self)
-        dialog.exec()
+        # Update results panel and switch to results tab
+        self.results_panel.set_chain(chain)
+        self.results_panel.calculate_and_plot()
+        self.results_tabs.setCurrentIndex(1)  # Switch to results tab
     
     def _show_about(self):
         """Show about dialog."""
