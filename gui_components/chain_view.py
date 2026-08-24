@@ -10,8 +10,37 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
+import registry
 from signal_chain import SignalChain
-import hardware_models
+
+
+def describe_component(component):
+    """
+    One-line description of a component for the chain list.
+
+    Built from the component's declared parameters, so it stays accurate as
+    parameters change and always reflects what will actually be serialized.
+    """
+    try:
+        label = registry.resolve(component.type_id).label
+    except (KeyError, AttributeError):
+        label = type(component).__name__
+
+    params = getattr(component, "params", {}) or {}
+    if not params:
+        return label
+
+    try:
+        specs = {s.name: s for s in registry.resolve(component.type_id).params}
+    except (KeyError, AttributeError):
+        specs = {}
+
+    parts = []
+    for key, value in params.items():
+        unit = specs[key].unit if key in specs else ""
+        rendered = f"{value:g}" if isinstance(value, (int, float)) else str(value)
+        parts.append(f"{rendered}{(' ' + unit) if unit else ''}")
+    return f"{label} ({', '.join(parts)})"
 
 
 class ChainView(QWidget):
@@ -163,15 +192,28 @@ class ChainView(QWidget):
             self._rebuild_chain()
             
     def _rebuild_chain(self):
-        """Rebuild the SignalChain object from current list."""
-        self.chain = SignalChain("User Chain")
+        """
+        Rebuild the SignalChain from the current list rows.
+
+        Carries the chain's bookkeeping fields across the rebuild - they came
+        from a loaded file or from the user, not from the widget, so recreating
+        a bare SignalChain here would silently drop them on the next save.
+        Saved labels are likewise preserved, since they are the stable handle
+        for referring to a point in the chain.
+        """
+        previous = self.chain
+        self.chain = SignalChain(
+            name=previous.name if previous is not None else "User Chain",
+            description=previous.description if previous is not None else "",
+            metadata=previous.metadata if previous is not None else None,
+        )
         for i in range(self.list_widget.count()):
             item = self.list_widget.item(i)
             # Skip digitizer items (they're handled separately)
             if item.data(Qt.UserRole + 1):
                 continue
             component = item.data(Qt.UserRole)
-            self.chain.add_component(component)
+            self.chain.add_component(component, label=item.data(Qt.UserRole + 2))
     
     def _has_digitizer(self):
         """Check if a digitizer item is present at the top."""
@@ -188,28 +230,58 @@ class ChainView(QWidget):
         return False
     
     def get_chain(self, digitizer_config=None):
-        """Return the current SignalChain object with digitizer components.
-        
+        """
+        Return the current SignalChain, including the digitizer endpoints.
+
         Args:
-            digitizer_config: Dictionary with digitizer configuration.
-                If None, uses stored config if available.
+            digitizer_config: Digitizer panel configuration dict. If None, the
+                stored config is used.
         """
         self._rebuild_chain()
-        
-        # Use provided config or fall back to stored config
+
         config = digitizer_config or self.digitizer_config
-        
-        # Add digitizer DAC and ADC to the chain if config available
-        if config and config['model'] == 'AD9082':
-            dac = hardware_models.AD9082_DAC(
-                carrier_power_dbm=config['carrier_power_dbm'],
-                gain_db=config['dac_gain_db'],
-                name='AD9082_DAC'
+        if config and config.get('model') == 'AD9082':
+            self.chain.set_digitizer(
+                registry.create("converter.ad9082_dac", {
+                    "carrier_power_dbm": config['carrier_power_dbm'],
+                    "gain_db": config['dac_gain_db'],
+                }, name='AD9082_DAC'),
+                registry.create("converter.ad9082_adc", {
+                    "gain_db": config['adc_gain_db'],
+                }, name='AD9082_ADC'),
             )
-            adc = hardware_models.AD9082_ADC(
-                gain_db=config['adc_gain_db'],
-                name='AD9082_ADC'
-            )
-            self.chain.set_digitizer(dac, adc)
-        
+
         return self.chain
+
+    def set_chain(self, chain):
+        """
+        Replace the displayed chain with ``chain``, e.g. after loading a file.
+
+        Rebuilds the list rows from the chain's components, preserving their
+        saved labels, and restores the digitizer rows if the chain has them.
+        """
+        self.list_widget.clear()
+        self.chain = chain
+        self.digitizer_config = None
+
+        if chain.dac is not None or chain.adc is not None:
+            dac_params = chain.dac.params if chain.dac is not None else {}
+            adc_params = chain.adc.params if chain.adc is not None else {}
+            self.digitizer_config = {
+                'model': 'AD9082',
+                'carrier_power_dbm': dac_params.get('carrier_power_dbm', 0.0),
+                'dac_gain_db': dac_params.get('gain_db', 0.0),
+                'adc_gain_db': adc_params.get('gain_db', 0.0),
+            }
+
+        labels = {index: label for label, index in chain.labels.items()}
+        for idx, component in enumerate(chain.components):
+            item = QListWidgetItem(describe_component(component))
+            item.setData(Qt.UserRole, component)
+            item.setData(Qt.UserRole + 1, False)
+            item.setData(Qt.UserRole + 2, labels.get(idx))
+            self.list_widget.addItem(item)
+
+        if self.digitizer_config is not None:
+            # Adds the styled DAC/ADC rows at top and bottom.
+            self.set_digitizer(self.digitizer_config)

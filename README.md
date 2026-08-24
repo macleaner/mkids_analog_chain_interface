@@ -113,6 +113,96 @@ This will:
 2. Perform gain and noise analysis
 3. Generate PDF diagrams showing the system
 
+## Saving and Loading Chains
+
+A chain is a durable artifact: save it next to the measurement data it
+describes, and reload it months later to get the same numbers.
+
+```python
+from signal_chain import SignalChain
+
+chain.description = "Cooldown CD-17, feedline A"
+chain.metadata = {"cooldown": "CD-17", "dataset": "/data/cd17/noise.h5"}
+chain.save("cd17_feedline_a.json")
+
+# Later, in a notebook next to the measured spectrum:
+chain = SignalChain.load("cd17_feedline_a.json")
+predicted = chain.output_noise(carrier_hz, offset_hz_array)
+if chain.load_warnings:
+    print("\n".join(chain.load_warnings))   # always check this
+```
+
+### File format
+
+```json
+{
+  "format_version": 2,
+  "name": "cd17_feedline_a",
+  "description": "Cooldown CD-17, feedline A",
+  "metadata": {"cooldown": "CD-17"},
+  "saved_utc": "2026-08-24T14:02:11+00:00",
+  "digitizer": {
+    "dac": {"type": "converter.ad9082_dac", "name": "AD9082_DAC",
+            "params": {"carrier_power_dbm": -20.0, "gain_db": 0.0}},
+    "adc": {"type": "converter.ad9082_adc", "name": "AD9082_ADC",
+            "params": {"gain_db": 0.0}}
+  },
+  "components": [
+    {"type": "attenuator", "name": "Attenuator", "label": "InputAtten",
+     "params": {"attenuation": -10.0, "temperature": 300.0}}
+  ]
+}
+```
+
+Properties that matter for bookkeeping:
+
+- **`type` is a stable registry id**, not a Python class name, so classes can be
+  renamed or moved without invalidating files. Former class names remain valid
+  as aliases, and files written by earlier versions still load.
+- **`params` is what the component was actually built with**, recorded by the
+  component itself rather than inferred from its constructor signature. A
+  parameter can no longer be silently dropped and replaced by a default.
+- **`label` is a stable handle** for a point in the chain, so an analysis result
+  can refer to "noise at the LNA" and still resolve after a reorder.
+- **Anything the file failed to fully specify appears in `chain.load_warnings`**
+  rather than being applied silently. The GUI shows these in a dialog.
+- `format_version` allows migration; `saved_utc` and `metadata` carry provenance.
+
+## Adding a Component
+
+Components declare their own parameters and register themselves:
+
+```python
+from component import PassiveComponent
+from registry import ParamSpec, register
+
+@register("cable.my_coax", category="Cables", label="My Coax",
+          params=(ParamSpec("length_m", default=1.0, label="Length", unit="m",
+                            minimum=0.0, maximum=100.0, step=0.1),))
+class MyCoax(PassiveComponent):
+    def __init__(self, length_m, name=None):
+        super().__init__(name=name, params={"length_m": length_m})
+        self.length = length_m
+
+    def gain(self, frequency):
+        return -0.5 * self.length
+```
+
+That is all that is needed - the component then appears in the GUI library with
+correct units and ranges, serializes, and is picked up automatically by the
+round-trip and characterization tests.
+
+## Tests
+
+```bash
+python -m pytest tests/ -q
+```
+
+`tests/test_characterization.py` pins the numerical output of every component
+against `tests/data/golden_components.json`, so a refactor cannot silently
+change results. If you change a model deliberately, regenerate it with
+`python tests/test_characterization.py --regenerate` and review the diff.
+
 ## Key Concepts
 
 ### Noise Propagation

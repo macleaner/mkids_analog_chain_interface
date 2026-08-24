@@ -1,137 +1,138 @@
 """
 Parameter Panel Widget
 
-Allows users to specify component parameters dynamically.
+Builds parameter inputs from the specification each component declares in the
+registry, rather than inferring them from its ``__init__`` signature.
+
+Reflection had two problems the specs remove: widget type and range were guessed
+from substrings in the parameter name ('temperature' anywhere in the name meant
+a 0-400 K spinbox), and constraints enforced inside a constructor were invisible
+to the GUI, so the panel would happily offer a value that then raised.
 """
 
-import inspect
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QFormLayout, QLabel, QLineEdit, 
-    QPushButton, QDoubleSpinBox, QSpinBox, QGroupBox
+    QWidget, QVBoxLayout, QFormLayout, QLabel, QLineEdit,
+    QPushButton, QDoubleSpinBox, QSpinBox, QComboBox, QCheckBox, QGroupBox
 )
 from PySide6.QtCore import Signal
 
 
 class ParameterPanel(QWidget):
-    """
-    Panel for specifying component parameters dynamically.
-    """
-    
-    add_component = Signal(object, dict)  # Signal with (class, parameters)
-    
+    """Panel for specifying component parameters."""
+
+    add_component = Signal(object, dict)  # (RegistryEntry, parameters)
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        
-        self.current_class = None
+
+        self.current_entry = None
         self.param_widgets = {}
-        
+
         layout = QVBoxLayout(self)
-        
-        # Group box for parameters
+
         self.group_box = QGroupBox("Component Parameters")
         self.form_layout = QFormLayout()
         self.group_box.setLayout(self.form_layout)
         layout.addWidget(self.group_box)
-        
-        # Selected component label
+
         self.selected_label = QLabel("No component selected")
         self.selected_label.setStyleSheet("font-weight: bold; color: #555;")
+        self.selected_label.setWordWrap(True)
         self.form_layout.addRow("Selected:", self.selected_label)
-        
-        # Add button
+
         self.add_button = QPushButton("Add to Chain")
         self.add_button.setEnabled(False)
         self.add_button.clicked.connect(self._on_add_clicked)
         layout.addWidget(self.add_button)
-        
+
         layout.addStretch()
-        
-    def set_component(self, comp_class):
-        """
-        Configure parameter inputs for the selected component class.
-        """
-        self.current_class = comp_class
-        self.param_widgets.clear()
-        
-        # Clear existing parameter widgets
+
+    def set_component(self, entry):
+        """Configure parameter inputs for the selected registry entry."""
+        self.current_entry = entry
+        self.param_widgets = {}
+
         while self.form_layout.rowCount() > 1:
             self.form_layout.removeRow(1)
-        
-        # Update label
-        self.selected_label.setText(comp_class.__name__)
-        
-        # Inspect __init__ signature
-        sig = inspect.signature(comp_class.__init__)
-        params = list(sig.parameters.items())[1:]  # Skip 'self'
-        
-        if not params:
-            # No parameters needed
+
+        self.selected_label.setText(entry.label)
+
+        if not entry.params:
             info_label = QLabel("(No parameters required)")
             info_label.setStyleSheet("color: #777; font-style: italic;")
             self.form_layout.addRow(info_label)
             self.add_button.setEnabled(True)
             return
-        
-        # Create input widgets based on parameter names and defaults
-        for param_name, param in params:
-            widget = self._create_widget_for_parameter(param_name, param)
-            if widget:
-                self.param_widgets[param_name] = widget
-                label = param_name.replace('_', ' ').title()
-                self.form_layout.addRow(f"{label}:", widget)
-        
+
+        for spec in entry.params:
+            widget = self._create_widget(spec)
+            self.param_widgets[spec.name] = widget
+            label = spec.display_label
+            if spec.unit:
+                label = f"{label} ({spec.unit})"
+            self.form_layout.addRow(f"{label}:", widget)
+            if spec.help:
+                widget.setToolTip(spec.help)
+
         self.add_button.setEnabled(True)
-        
-    def _create_widget_for_parameter(self, param_name, param):
-        """Create appropriate input widget for a parameter."""
-        default_value = param.default if param.default != inspect.Parameter.empty else None
-        
-        # Determine widget type based on name and default
-        if 'temperature' in param_name.lower():
-            widget = QDoubleSpinBox()
-            widget.setRange(0, 400)
-            widget.setValue(default_value if default_value is not None else 300)
-            widget.setSuffix(" K")
+
+    def _create_widget(self, spec):
+        """Create the input widget a parameter spec calls for."""
+        if spec.choices:
+            widget = QComboBox()
+            for choice in spec.choices:
+                widget.addItem(f"{choice:g}" if isinstance(choice, (int, float))
+                               else str(choice), choice)
+            if spec.default is not None:
+                index = widget.findData(spec.default)
+                if index >= 0:
+                    widget.setCurrentIndex(index)
             return widget
-            
-        elif 'length' in param_name.lower():
-            widget = QDoubleSpinBox()
-            widget.setRange(0, 100)
-            widget.setValue(default_value if default_value is not None else 1.0)
-            widget.setSingleStep(0.1)
-            widget.setSuffix(" m")
+
+        if spec.kind == "bool":
+            widget = QCheckBox()
+            widget.setChecked(bool(spec.default))
             return widget
-            
-        elif 'attenuation' in param_name.lower():
-            widget = QDoubleSpinBox()
-            widget.setRange(-100, 0)
-            widget.setValue(default_value if default_value is not None else -10.0)
-            widget.setSuffix(" dB")
+
+        if spec.kind in ("float", "int"):
+            widget = QDoubleSpinBox() if spec.kind == "float" else QSpinBox()
+            low = spec.minimum if spec.minimum is not None else -1e9
+            high = spec.maximum if spec.maximum is not None else 1e9
+            widget.setRange(low, high)
+            if spec.step is not None:
+                widget.setSingleStep(spec.step)
+            if isinstance(widget, QDoubleSpinBox):
+                widget.setDecimals(3)
+            if spec.default is not None:
+                widget.setValue(spec.default)
+            if spec.unit:
+                widget.setSuffix(f" {spec.unit}")
             return widget
-            
-        else:
-            # Generic numeric or text input
-            widget = QLineEdit()
-            if default_value is not None:
-                widget.setText(str(default_value))
-            return widget
-    
+
+        widget = QLineEdit()
+        if spec.default is not None:
+            widget.setText(str(spec.default))
+        return widget
+
+    def _read_widget(self, spec, widget):
+        """Read a value back out in the parameter's declared type."""
+        if isinstance(widget, QComboBox):
+            return widget.currentData()
+        if isinstance(widget, QCheckBox):
+            return widget.isChecked()
+        if isinstance(widget, (QDoubleSpinBox, QSpinBox)):
+            return widget.value()
+        return spec.coerce(widget.text())
+
     def _on_add_clicked(self):
-        """Emit signal with component and parameters."""
-        if not self.current_class:
+        """Emit the entry plus the collected parameter values."""
+        if not self.current_entry:
             return
-        
-        # Gather parameter values
+
         params = {}
-        for param_name, widget in self.param_widgets.items():
-            if isinstance(widget, (QDoubleSpinBox, QSpinBox)):
-                params[param_name] = widget.value()
-            elif isinstance(widget, QLineEdit):
-                text = widget.text()
-                # Try to convert to number
-                try:
-                    params[param_name] = float(text)
-                except ValueError:
-                    params[param_name] = text
-        
-        self.add_component.emit(self.current_class, params)
+        for spec in self.current_entry.params:
+            widget = self.param_widgets.get(spec.name)
+            if widget is not None:
+                params[spec.name] = self._read_widget(spec, widget)
+
+        self.add_component.emit(self.current_entry, params)

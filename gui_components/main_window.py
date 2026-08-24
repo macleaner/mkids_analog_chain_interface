@@ -4,9 +4,6 @@ Main Window
 Main application window for the Analog Chain Builder.
 """
 
-import sys
-import json
-import inspect
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QMessageBox, QFileDialog, QToolBar, QTabWidget
@@ -14,10 +11,11 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 
-import hardware_models
+import registry
+from signal_chain import SignalChain
 
 from .component_library import ComponentLibrary
-from .chain_view import ChainView
+from .chain_view import ChainView, describe_component
 from .parameter_panel import ParameterPanel
 from .diagram_panel import DiagramPanel
 from .results_panel import ResultsPanel
@@ -179,32 +177,26 @@ class MainWindow(QMainWindow):
         """Handle digitizer settings being applied."""
         self.chain_view.set_digitizer(config)
         
-    def _on_component_selected(self, category, comp_class):
+    def _on_component_selected(self, category, entry):
         """Handle component selection from library."""
-        self.param_panel.set_component(comp_class)
-        
-    def _on_add_component(self, comp_class, params):
+        self.param_panel.set_component(entry)
+
+    def _on_add_component(self, entry, params):
         """Handle adding a component to the chain."""
         try:
-            # Instantiate component with parameters
-            component = comp_class(**params)
-            
-            # Create description string
-            param_str = ", ".join(f"{k}={v}" for k, v in params.items())
-            if param_str:
-                description = f"{comp_class.__name__} ({param_str})"
-            else:
-                description = comp_class.__name__
-            
-            # Add to chain view
-            self.chain_view.add_component(component, description)
-            
-        except Exception as e:
+            # registry.create validates ranges and rejects unknown parameters,
+            # so a bad value is reported here rather than deep in a model.
+            component = registry.create(entry.type_id, params)
+        except (KeyError, ValueError, TypeError) as exc:
             QMessageBox.critical(
-                self, "Error",
-                f"Failed to create component:\n{str(e)}"
+                self, "Invalid Parameters",
+                f"Could not create {entry.label}:\n\n{exc}"
             )
-    
+            return
+
+        self.chain_view.add_component(component, describe_component(component))
+
+
     def _new_chain(self):
         """Create a new chain."""
         reply = QMessageBox.question(
@@ -220,101 +212,56 @@ class MainWindow(QMainWindow):
         file_path, _ = QFileDialog.getSaveFileName(
             self, "Save Chain", "", "JSON Files (*.json)"
         )
-        
+
         if not file_path:
             return
-        
-        # Build chain data with digitizer config
-        save_data = {
-            'digitizer': self.digitizer_panel.get_digitizer_config(),
-            'components': []
-        }
-        
-        for i in range(self.chain_view.list_widget.count()):
-            item = self.chain_view.list_widget.item(i)
 
-            # Skip the DAC/ADC display rows - they carry no component object
-            # and are restored from the 'digitizer' key on load
-            if item.data(Qt.UserRole + 1):
-                continue
+        if not file_path.lower().endswith(".json"):
+            file_path += ".json"
 
-            component = item.data(Qt.UserRole)
-
-            # Extract component info
-            comp_info = {
-                'class': component.__class__.__name__,
-                'description': item.text(),
-                'parameters': {}
-            }
-            
-            # Try to extract parameters from component attributes
-            sig = inspect.signature(component.__class__.__init__)
-            for param_name in list(sig.parameters.keys())[1:]:
-                if hasattr(component, param_name):
-                    value = getattr(component, param_name)
-                    # Only save serializable types
-                    if isinstance(value, (int, float, str, bool)):
-                        comp_info['parameters'][param_name] = value
-            
-            save_data['components'].append(comp_info)
-        
-        # Save to file
+        chain = self.chain_view.get_chain(
+            self.digitizer_panel.get_digitizer_config())
         try:
-            with open(file_path, 'w') as f:
-                json.dump(save_data, f, indent=2)
-            QMessageBox.information(self, "Success", "Chain saved successfully!")
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to save chain:\n{str(e)}")
-            
+            chain.save(file_path)
+        except OSError as exc:
+            QMessageBox.critical(self, "Error", f"Failed to save chain:\n{exc}")
+            return
+
+        self.statusBar().showMessage(f"Saved {file_path}", 5000)
+
     def _load_chain(self):
         """Load a chain from a JSON file."""
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Load Chain", "", "JSON Files (*.json)"
         )
-        
+
         if not file_path:
             return
-        
+
         try:
-            with open(file_path, 'r') as f:
-                data = json.load(f)
-            
-            # Clear current chain
-            self.chain_view.list_widget.clear()
-            
-            # Handle both old and new formats
-            if isinstance(data, dict) and 'components' in data:
-                # New format with digitizer config
-                if 'digitizer' in data:
-                    self.digitizer_panel.set_digitizer_config(data['digitizer'])
-                    # Also apply it to the chain view
-                    self.chain_view.set_digitizer(data['digitizer'])
-                chain_data = data['components']
-            else:
-                # Old format (just component list)
-                chain_data = data
-            
-            # Rebuild chain
-            for comp_info in chain_data:
-                class_name = comp_info['class']
-                params = comp_info['parameters']
-                
-                # Get class from hardware_models
-                if hasattr(hardware_models, class_name):
-                    comp_class = getattr(hardware_models, class_name)
-                    component = comp_class(**params)
-                    self.chain_view.add_component(component, comp_info['description'])
-                else:
-                    QMessageBox.warning(
-                        self, "Warning",
-                        f"Unknown component class: {class_name}"
-                    )
-            
-            QMessageBox.information(self, "Success", "Chain loaded successfully!")
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load chain:\n{str(e)}")
-            
+            chain = SignalChain.load(file_path)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Error", f"Failed to load chain:\n{exc}")
+            return
+
+        self.chain_view.set_chain(chain)
+        if chain.dac is not None or chain.adc is not None:
+            self.digitizer_panel.set_digitizer_config(
+                self.chain_view.digitizer_config)
+
+        # A file that did not fully describe the chain must say so - a default
+        # silently standing in for a saved value is how a bookkeeping record
+        # stops matching the hardware it documents.
+        if chain.load_warnings:
+            QMessageBox.warning(
+                self, "Loaded with warnings",
+                "The chain loaded, but not everything in the file was used "
+                "as-is:\n\n" + "\n".join(f"• {w}" for w in chain.load_warnings)
+            )
+        else:
+            self.statusBar().showMessage(f"Loaded {file_path}", 5000)
+
+
     def _generate_diagram(self):
         """Generate a visual diagram of the chain."""
         digitizer_config = self.digitizer_panel.get_digitizer_config()

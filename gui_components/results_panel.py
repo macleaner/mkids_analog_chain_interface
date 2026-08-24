@@ -194,7 +194,11 @@ class ResultsPanel(QWidget):
             else:
                 self.freq_data = np.linspace(gain_start, gain_stop, num_points)
             
-            self.gain_data = np.array([self.chain.total_gain(f) for f in self.freq_data])
+            # Evaluated as one vectorized call; the analysis methods accept
+            # frequency arrays, so no per-point Python loop is needed.
+            self.gain_data = np.broadcast_to(
+                np.asarray(self.chain.total_gain(self.freq_data), dtype=float),
+                self.freq_data.shape).copy()
             
             # Calculate noise data
             if is_log:
@@ -203,27 +207,25 @@ class ResultsPanel(QWidget):
             else:
                 self.spectral_freq_data = np.linspace(start_spectral, stop_spectral, num_points)
             
+            shape = self.spectral_freq_data.shape
             if show_contributions:
-                self.noise_data = []
-                self.contributions_data = {}
-                
-                for spectral_freq in self.spectral_freq_data:
-                    total_noise, contributions = self.chain.output_noise(
-                        carrier_freq, spectral_freq, contributions=True
-                    )
-                    self.noise_data.append(total_noise)
-                    
-                    for label, noise_val in contributions.items():
-                        if label not in self.contributions_data:
-                            self.contributions_data[label] = []
-                        self.contributions_data[label].append(noise_val)
-                
-                self.noise_data = np.array(self.noise_data)
+                total_noise, contributions = self.chain.output_noise(
+                    carrier_freq, self.spectral_freq_data, contributions=True
+                )
+                self.noise_data = np.broadcast_to(
+                    np.asarray(total_noise, dtype=float), shape).copy()
+                # A frequency-independent contributor (a warm attenuator, say)
+                # returns a scalar, so broadcast each series to the sweep length.
+                self.contributions_data = {
+                    label: np.broadcast_to(
+                        np.asarray(value, dtype=float), shape).copy()
+                    for label, value in contributions.items()
+                }
             else:
-                self.noise_data = np.array([
-                    self.chain.output_noise(carrier_freq, f) 
-                    for f in self.spectral_freq_data
-                ])
+                self.noise_data = np.broadcast_to(
+                    np.asarray(self.chain.output_noise(
+                        carrier_freq, self.spectral_freq_data), dtype=float),
+                    shape).copy()
                 self.contributions_data = None
             
             # Plot both

@@ -1,11 +1,52 @@
 """
 Signal chain class for managing ordered components and calculating
 gain and noise propagation through the chain.
+
+Also owns serialization: a chain knows how to write itself to, and rebuild
+itself from, a JSON file. Keeping that here rather than in the GUI means a
+saved chain can be loaded from a script or notebook alongside the measurement
+data it describes, and can be tested without Qt.
 """
 
+import json
+import os
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
 import numpy as np
-from typing import List, Union, Tuple
-from utils import to_dbm, to_W, db_to_linear
+
+import registry
+from utils import to_dbm, to_W
+
+#: Bumped when the on-disk layout changes in a way that needs migration.
+FORMAT_VERSION = 2
+
+
+def _evaluate_noise(component, spectral_frequency):
+    """
+    Evaluate a component's noise PSD in W/Hz, or return None if it has none.
+
+    Components vary in whether ``noise()`` takes a frequency, so both calling
+    conventions are tried. Anything other than a signature mismatch propagates:
+    a model that raises is a bug to surface, not a component to silently treat
+    as noiseless, which would quietly under-report the noise budget.
+    """
+    noise_attr = getattr(component, "noise", None)
+    if noise_attr is None:
+        return None
+    try:
+        return noise_attr(spectral_frequency)
+    except TypeError:
+        # Signature mismatch: the model takes no frequency argument.
+        return noise_attr()
+
+
+def _has_any_noise(noise_power):
+    """True if this contribution is non-zero anywhere. Array-safe."""
+    if noise_power is None:
+        return False
+    arr = np.asarray(noise_power, dtype=float)
+    return bool(np.any(arr > 0))
 
 
 class SignalChain:
@@ -13,22 +54,32 @@ class SignalChain:
     Manages an ordered sequence of RF components and calculates
     signal gain and noise propagation through the chain.
     """
-    
-    def __init__(self, name="Signal Chain"):
+
+    def __init__(self, name="Signal Chain", description="", metadata=None):
         """
         Initialize an empty signal chain.
-        
+
         Parameters
         ----------
         name : str
             Name/description of this signal chain
+        description : str, optional
+            Free-text notes. Persisted, so use it to record what this chain
+            corresponds to - a cooldown, a deployment, a measurement run.
+        metadata : dict, optional
+            Arbitrary JSON-serializable bookkeeping fields (cooldown id, sample
+            name, dataset path, operator...). Persisted verbatim.
         """
         self.name = name
+        self.description = description
+        self.metadata = dict(metadata) if metadata else {}
         self.components = []
         self.labels = {}  # Map label -> index
         self.dac = None  # DAC at start of chain
         self.adc = None  # ADC at end of chain
-        
+        #: Non-fatal issues from the most recent load(), for the caller to show.
+        self.load_warnings: List[str] = []
+
     def set_digitizer(self, dac, adc):
         """
         Set the DAC and ADC components for the chain.
@@ -191,57 +242,178 @@ class SignalChain:
             Dictionary mapping component labels to their noise contributions
         """
         ref_idx = self.get_index(reference_point)
-        
+
         total_noise_W = 0.0
         noise_dict = {}
-        
-        # Iterate through all components up to and including reference point
+
+        # Every component up to and including the reference point.
         for idx in range(ref_idx + 1):
-            component = self.components[idx]
-            
-            # Check if component has noise method
-            if hasattr(component, 'noise'):
-                # Get intrinsic noise power from component at the spectral frequency
-                # Try to determine if noise() accepts multiple parameters
-                try:
-                    # Most components have simple noise that only depends on frequency (or is constant)
-                    # Pass spectral_frequency for components with frequency-dependent noise
-                    noise_power = component.noise(spectral_frequency)
-                except TypeError:
-                    # If that fails, component noise might not need frequency parameter
-                    try:
-                        noise_power = component.noise()
-                    except:
-                        # Skip this component if noise() call fails
-                        continue
-                
-                if noise_power > 0:
-                    # Calculate gain from component to reference point at carrier frequency
-                    gain_db = self.gain_between(idx, ref_idx, carrier_frequency)
-                    
-                    # Propagate noise to reference point
-                    # N_out = N_in * G (linear) or N_out_dBm = N_in_dBm + G_dB
-                    noise_at_ref_dbm = to_dbm(noise_power) + gain_db
-                    noise_at_ref_W = to_W(noise_at_ref_dbm)
-                    
-                    total_noise_W += noise_at_ref_W
-                    
-                    # Store individual contribution if requested
-                    if contributions:
-                        label = self._get_label_for_index(idx)
-                        noise_dict[label] = noise_at_ref_W
-        
+            noise_power = _evaluate_noise(self.components[idx], spectral_frequency)
+            if not _has_any_noise(noise_power):
+                continue
+
+            # Gain from this component to the reference point, at the carrier.
+            gain_db = self.gain_between(idx, ref_idx, carrier_frequency)
+
+            # N_out_dBm = N_in_dBm + G_dB
+            noise_at_ref_W = to_W(to_dbm(noise_power) + gain_db)
+            total_noise_W = total_noise_W + noise_at_ref_W
+
+            if contributions:
+                noise_dict[self._get_label_for_index(idx)] = noise_at_ref_W
+
         if contributions:
             return total_noise_W, noise_dict
-        else:
-            return total_noise_W
-    
+        return total_noise_W
+
+
     def _get_label_for_index(self, idx):
         """Find the label for a given index."""
         for label, label_idx in self.labels.items():
             if label_idx == idx:
                 return label
         return f"Component_{idx}"
+
+    # ------------------------------------------------------------------
+    # Serialization
+    # ------------------------------------------------------------------
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Serialize the chain to a JSON-ready dict.
+
+        Each component records its stable registry type id and the exact
+        parameters it was constructed with, plus its chain label - so an
+        analysis result can refer to a point in the chain by name and still
+        resolve after the chain is reordered.
+        """
+        return {
+            "format_version": FORMAT_VERSION,
+            "name": self.name,
+            "description": self.description,
+            "metadata": dict(self.metadata),
+            "saved_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "digitizer": {
+                "dac": self.dac.to_dict() if self.dac is not None else None,
+                "adc": self.adc.to_dict() if self.adc is not None else None,
+            },
+            "components": [
+                dict(component.to_dict(), label=self._get_label_for_index(idx))
+                for idx, component in enumerate(self.components)
+            ],
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "SignalChain":
+        """
+        Rebuild a chain from ``to_dict`` output.
+
+        Accepts both the current format and the two earlier GUI formats (a bare
+        list of components, and a dict with a flat ``digitizer`` config), so
+        previously-saved files keep working.
+        """
+        warnings: List[str] = []
+
+        if isinstance(data, list):
+            # Oldest format: a bare list of component dicts, no digitizer.
+            data = {"components": data}
+
+        version = data.get("format_version", 1)
+        if version > FORMAT_VERSION:
+            warnings.append(
+                f"file declares format_version {version} but this build "
+                f"understands up to {FORMAT_VERSION}; loading anyway"
+            )
+
+        chain = cls(
+            name=data.get("name", "Signal Chain"),
+            description=data.get("description", ""),
+            metadata=data.get("metadata"),
+        )
+
+        for entry in data.get("components", []):
+            type_id = entry.get("type") or entry.get("class")
+            if type_id is None:
+                warnings.append(f"skipped a component with no type: {entry!r}")
+                continue
+            params = entry.get("params", entry.get("parameters", {}))
+            try:
+                component = registry.create(
+                    type_id, params, name=entry.get("name"), warnings=warnings)
+            except (KeyError, ValueError, TypeError) as exc:
+                warnings.append(f"could not load component {type_id!r}: {exc}")
+                continue
+            # Prefer the saved label; fall back to the auto-generated one.
+            chain.add_component(component, label=entry.get("label"))
+
+        chain._load_digitizer(data.get("digitizer"), warnings)
+        chain.load_warnings = warnings
+        return chain
+
+    def _load_digitizer(self, digitizer: Optional[Dict[str, Any]],
+                        warnings: List[str]) -> None:
+        """Restore DAC/ADC, accepting both the current and legacy layouts."""
+        if not digitizer:
+            return
+
+        if "dac" in digitizer or "adc" in digitizer:
+            # Current format: each converter is a full component dict.
+            dac_data, adc_data = digitizer.get("dac"), digitizer.get("adc")
+            dac = adc = None
+            if dac_data:
+                try:
+                    dac = registry.create(dac_data["type"], dac_data.get("params"),
+                                          warnings=warnings)
+                except (KeyError, ValueError, TypeError) as exc:
+                    warnings.append(f"could not load DAC: {exc}")
+            if adc_data:
+                try:
+                    adc = registry.create(adc_data["type"], adc_data.get("params"),
+                                          warnings=warnings)
+                except (KeyError, ValueError, TypeError) as exc:
+                    warnings.append(f"could not load ADC: {exc}")
+            if dac is not None or adc is not None:
+                self.set_digitizer(dac, adc)
+            return
+
+        # Legacy GUI format: a flat config dict from the digitizer panel.
+        if digitizer.get("model") == "AD9082":
+            try:
+                self.set_digitizer(
+                    registry.create("converter.ad9082_dac", {
+                        "carrier_power_dbm": digitizer.get("carrier_power_dbm", 0.0),
+                        "gain_db": digitizer.get("dac_gain_db", 0.0),
+                    }, warnings=warnings),
+                    registry.create("converter.ad9082_adc", {
+                        "gain_db": digitizer.get("adc_gain_db", 0.0),
+                    }, warnings=warnings),
+                )
+            except (KeyError, ValueError, TypeError) as exc:
+                warnings.append(f"could not load legacy digitizer config: {exc}")
+        else:
+            warnings.append(
+                f"unrecognized legacy digitizer model "
+                f"{digitizer.get('model')!r}; digitizer not restored")
+
+    def save(self, path: str) -> None:
+        """Write the chain to ``path`` as JSON."""
+        with open(path, "w") as fh:
+            json.dump(self.to_dict(), fh, indent=2)
+
+    @classmethod
+    def load(cls, path: str) -> "SignalChain":
+        """
+        Read a chain from ``path``.
+
+        Check ``chain.load_warnings`` afterwards - a non-empty list means the
+        file did not fully describe the chain that was rebuilt.
+        """
+        with open(path) as fh:
+            data = json.load(fh)
+        chain = cls.from_dict(data)
+        if not chain.name or chain.name == "Signal Chain":
+            chain.name = os.path.splitext(os.path.basename(path))[0]
+        return chain
     
     def total_gain(self, frequency):
         """
@@ -295,80 +467,59 @@ class SignalChain:
         """
         total_noise_W = 0.0
         noise_dict = {}
-        
-        # Calculate gain from each component to output
-        # Gain from DAC to output: gain of all components + ADC
-        # Gain from regular components: gain from that component to end + ADC
-        # ADC noise: no further gain (already at output)
-        
-        # DAC noise contribution
-        if self.dac is not None and hasattr(self.dac, 'noise'):
-            try:
-                dac_noise = self.dac.noise(spectral_frequency)
-                if dac_noise > 0:
-                    # Gain from DAC output through all components to ADC output
-                    gain_to_output = 0.0
-                    if len(self.components) > 0:
-                        gain_to_output += self.gain_between(0, len(self.components) - 1, carrier_frequency)
-                    if self.adc is not None:
-                        gain_to_output += self.adc.gain(carrier_frequency)
-                    
-                    dac_noise_at_output_dbm = to_dbm(dac_noise) + gain_to_output
-                    dac_noise_at_output_W = to_W(dac_noise_at_output_dbm)
-                    total_noise_W += dac_noise_at_output_W
-                    
-                    if contributions:
-                        noise_dict['AD9082_DAC'] = dac_noise_at_output_W
-            except:
-                pass
-        
-        # Regular component noise contributions
-        if len(self.components) > 0:
-            for idx in range(len(self.components)):
-                component = self.components[idx]
-                
-                if hasattr(component, 'noise'):
-                    try:
-                        noise_power = component.noise(spectral_frequency)
-                    except TypeError:
-                        try:
-                            noise_power = component.noise()
-                        except:
-                            continue
-                    
-                    if noise_power > 0:
-                        # Gain from this component to output (through remaining components + ADC)
-                        gain_to_output = 0.0
-                        if idx < len(self.components) - 1:
-                            gain_to_output += self.gain_between(idx, len(self.components) - 1, carrier_frequency)
-                        if self.adc is not None:
-                            gain_to_output += self.adc.gain(carrier_frequency)
-                        
-                        noise_at_output_dbm = to_dbm(noise_power) + gain_to_output
-                        noise_at_output_W = to_W(noise_at_output_dbm)
-                        total_noise_W += noise_at_output_W
-                        
-                        if contributions:
-                            label = self._get_label_for_index(idx)
-                            noise_dict[label] = noise_at_output_W
-        
-        # ADC noise contribution (already at output, no further gain)
-        if self.adc is not None and hasattr(self.adc, 'noise'):
-            try:
-                adc_noise = self.adc.noise(spectral_frequency)
-                if adc_noise > 0:
-                    total_noise_W += adc_noise
-                    
-                    if contributions:
-                        noise_dict['AD9082_ADC'] = adc_noise
-            except:
-                pass
-        
+        n_components = len(self.components)
+
+        # Gain seen by noise originating downstream of the component chain.
+        adc_gain = (self.adc.gain(carrier_frequency)
+                    if self.adc is not None else 0.0)
+
+        # DAC noise: propagates through every component, then the ADC.
+        if self.dac is not None:
+            dac_noise = _evaluate_noise(self.dac, spectral_frequency)
+            if _has_any_noise(dac_noise):
+                gain_to_output = adc_gain
+                if n_components > 0:
+                    gain_to_output = gain_to_output + self.gain_between(
+                        0, n_components - 1, carrier_frequency)
+                contribution = to_W(to_dbm(dac_noise) + gain_to_output)
+                total_noise_W = total_noise_W + contribution
+                if contributions:
+                    noise_dict[self.dac.name] = contribution
+
+        # Chain components.
+        for idx in range(n_components):
+            noise_power = _evaluate_noise(self.components[idx], spectral_frequency)
+            if not _has_any_noise(noise_power):
+                continue
+
+            # NOTE: for the final component this deliberately excludes that
+            # component's own gain, whereas noise_at_point() includes it via
+            # gain_between(idx, ref_idx). The two methods therefore disagree on
+            # the last component by its own gain. Preserved as-is; settling on
+            # one convention is a physics decision, not a refactor.
+            gain_to_output = adc_gain
+            if idx < n_components - 1:
+                gain_to_output = gain_to_output + self.gain_between(
+                    idx, n_components - 1, carrier_frequency)
+
+            contribution = to_W(to_dbm(noise_power) + gain_to_output)
+            total_noise_W = total_noise_W + contribution
+            if contributions:
+                noise_dict[self._get_label_for_index(idx)] = contribution
+
+        # ADC noise is already at the output, so it sees no further gain.
+        if self.adc is not None:
+            adc_noise = _evaluate_noise(self.adc, spectral_frequency)
+            if _has_any_noise(adc_noise):
+                total_noise_W = total_noise_W + adc_noise
+                if contributions:
+                    noise_dict[self.adc.name] = adc_noise
+
         if contributions:
             return total_noise_W, noise_dict
-        else:
-            return total_noise_W
-    
+        return total_noise_W
+
+
     def summary(self):
         """
         Print a summary of the signal chain.
