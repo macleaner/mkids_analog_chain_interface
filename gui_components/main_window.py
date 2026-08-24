@@ -232,8 +232,14 @@ class MainWindow(QMainWindow):
         
         for i in range(self.chain_view.list_widget.count()):
             item = self.chain_view.list_widget.item(i)
+
+            # Skip the DAC/ADC display rows - they carry no component object
+            # and are restored from the 'digitizer' key on load
+            if item.data(Qt.UserRole + 1):
+                continue
+
             component = item.data(Qt.UserRole)
-            
+
             # Extract component info
             comp_info = {
                 'class': component.__class__.__name__,
