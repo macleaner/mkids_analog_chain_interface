@@ -9,6 +9,7 @@ from .parameter_panel import ParameterPanel
 from .chain_view import ChainView
 from .diagram_panel import DiagramPanel
 from .results_panel import ResultsPanel
+from .digitizer_panel import DigitizerPanel
 from .main_window import MainWindow
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     'ChainView',
     'DiagramPanel',
     'ResultsPanel',
+    'DigitizerPanel',
     'MainWindow',
 ]

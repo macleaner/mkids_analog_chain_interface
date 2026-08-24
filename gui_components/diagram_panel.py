@@ -56,7 +56,7 @@ class DiagramPanel(QWidget):
         
         # Show noise checkbox
         self.show_noise_check = QCheckBox("Show component noise values")
-        self.show_noise_check.setChecked(False)
+        self.show_noise_check.setChecked(True)
         param_layout.addRow("", self.show_noise_check)
         
         param_group.setLayout(param_layout)
@@ -124,7 +124,9 @@ class DiagramPanel(QWidget):
             ax.text(5, 9.5, self.chain.name, ha='center', va='top', 
                     fontsize=16, fontweight='bold')
             
-            n_components = len(self.chain.components)
+            # Get full component list including DAC and ADC
+            full_components = self.chain.get_full_component_list()
+            n_components = len(full_components)
             
             # Calculate layout
             box_width = 8.0 / max(n_components, 1)
@@ -136,15 +138,28 @@ class DiagramPanel(QWidget):
             box_height = 1.2
             
             # Draw components
-            for idx, component in enumerate(self.chain.components):
+            for idx, component in enumerate(full_components):
                 x = start_x + idx * spacing
                 
                 # Get component info
-                label = self.chain._get_label_for_index(idx)
                 comp_type = getattr(component, 'component_type', 'generic')
                 
+                # Get label based on component type
+                if comp_type == 'dac':
+                    label = 'DAC'
+                elif comp_type == 'adc':
+                    label = 'ADC'
+                elif hasattr(component, 'name'):
+                    label = component.name
+                else:
+                    label = component.__class__.__name__
+                
                 # Choose color based on type
-                if comp_type == 'active':
+                if comp_type == 'dac':
+                    color = '#FFD700'  # Gold for DAC
+                elif comp_type == 'adc':
+                    color = '#FFA500'  # Orange for ADC
+                elif comp_type == 'active':
                     color = '#90EE90'  # Light green
                 elif comp_type == 'passive':
                     color = '#ADD8E6'  # Light blue

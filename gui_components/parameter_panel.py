@@ -105,7 +105,7 @@ class ParameterPanel(QWidget):
         elif 'attenuation' in param_name.lower():
             widget = QDoubleSpinBox()
             widget.setRange(-100, 0)
-            widget.setValue(default_value if default_value is not None else -3.0)
+            widget.setValue(default_value if default_value is not None else -10.0)
             widget.setSuffix(" dB")
             return widget
             

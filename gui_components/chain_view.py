@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from signal_chain import SignalChain
+import hardware_models
 
 
 class ChainView(QWidget):
@@ -22,6 +23,7 @@ class ChainView(QWidget):
         super().__init__(parent)
         
         self.chain = SignalChain("User Chain")
+        self.digitizer_config = None  # Store current digitizer config
         
         layout = QVBoxLayout(self)
         
@@ -61,12 +63,68 @@ class ChainView(QWidget):
         
         item = QListWidgetItem(description)
         item.setData(Qt.UserRole, component)
-        self.list_widget.addItem(item)
+        item.setData(Qt.UserRole + 1, False)  # Mark as regular component (not digitizer)
+        
+        # If ADC is at the bottom, insert before it; otherwise add at the end
+        if self._has_adc_at_bottom():
+            # Insert before the last item (which is the ADC)
+            self.list_widget.insertItem(self.list_widget.count() - 1, item)
+        else:
+            self.list_widget.addItem(item)
+    
+    def set_digitizer(self, config):
+        """Set and display the digitizer at the top and bottom of the chain."""
+        self.digitizer_config = config
+        
+        # Remove existing digitizer items if present
+        items_to_remove = []
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if item.data(Qt.UserRole + 1):  # Check if it's a digitizer item
+                items_to_remove.append(i)
+        
+        # Remove in reverse order to maintain indices
+        for i in reversed(items_to_remove):
+            self.list_widget.takeItem(i)
+        
+        from PySide6.QtGui import QFont, QColor
+        
+        # Create DAC display text and item (at the top)
+        dac_text = f"🔸 {config['model']} DAC (Pcarrier={config['carrier_power_dbm']:.1f} dBm, Gain={config['dac_gain_db']:.1f} dB)"
+        dac_item = QListWidgetItem(dac_text)
+        dac_item.setData(Qt.UserRole, None)  # No actual component object
+        dac_item.setData(Qt.UserRole + 1, True)  # Mark as digitizer item
+        dac_item.setFlags(dac_item.flags() & ~Qt.ItemIsSelectable)  # Make non-selectable
+        
+        # Style DAC item
+        font = QFont()
+        font.setBold(True)
+        dac_item.setFont(font)
+        dac_item.setForeground(QColor(0, 100, 200))  # Blue color
+        
+        # Insert DAC at the top
+        self.list_widget.insertItem(0, dac_item)
+        
+        # Create ADC display text and item (at the bottom)
+        adc_text = f"🔸 {config['model']} ADC (Gain={config['adc_gain_db']:.1f} dB)"
+        adc_item = QListWidgetItem(adc_text)
+        adc_item.setData(Qt.UserRole, None)  # No actual component object
+        adc_item.setData(Qt.UserRole + 1, True)  # Mark as digitizer item
+        adc_item.setFlags(adc_item.flags() & ~Qt.ItemIsSelectable)  # Make non-selectable
+        
+        # Style ADC item
+        adc_item.setFont(font)
+        adc_item.setForeground(QColor(0, 100, 200))  # Blue color
+        
+        # Add ADC at the bottom
+        self.list_widget.addItem(adc_item)
         
     def _move_up(self):
         """Move selected component up in the chain."""
         current_row = self.list_widget.currentRow()
-        if current_row > 0:
+        # Prevent moving above digitizer (if present)
+        min_row = 1 if self._has_digitizer() else 0
+        if current_row > min_row:
             item = self.list_widget.takeItem(current_row)
             self.list_widget.insertItem(current_row - 1, item)
             self.list_widget.setCurrentRow(current_row - 1)
@@ -75,7 +133,9 @@ class ChainView(QWidget):
     def _move_down(self):
         """Move selected component down in the chain."""
         current_row = self.list_widget.currentRow()
-        if current_row < self.list_widget.count() - 1 and current_row >= 0:
+        # Prevent moving below ADC (if present at bottom)
+        max_row = self.list_widget.count() - 2 if self._has_adc_at_bottom() else self.list_widget.count() - 1
+        if current_row < max_row and current_row >= 0:
             item = self.list_widget.takeItem(current_row)
             self.list_widget.insertItem(current_row + 1, item)
             self.list_widget.setCurrentRow(current_row + 1)
@@ -85,8 +145,11 @@ class ChainView(QWidget):
         """Remove selected component from chain."""
         current_row = self.list_widget.currentRow()
         if current_row >= 0:
-            self.list_widget.takeItem(current_row)
-            self._rebuild_chain()
+            item = self.list_widget.item(current_row)
+            # Don't allow removing digitizer item
+            if not item.data(Qt.UserRole + 1):  # Not a digitizer item
+                self.list_widget.takeItem(current_row)
+                self._rebuild_chain()
             
     def _clear_all(self):
         """Clear all components from chain."""
@@ -104,10 +167,49 @@ class ChainView(QWidget):
         self.chain = SignalChain("User Chain")
         for i in range(self.list_widget.count()):
             item = self.list_widget.item(i)
+            # Skip digitizer items (they're handled separately)
+            if item.data(Qt.UserRole + 1):
+                continue
             component = item.data(Qt.UserRole)
             self.chain.add_component(component)
     
-    def get_chain(self):
-        """Return the current SignalChain object."""
+    def _has_digitizer(self):
+        """Check if a digitizer item is present at the top."""
+        if self.list_widget.count() > 0:
+            first_item = self.list_widget.item(0)
+            return first_item.data(Qt.UserRole + 1) if first_item else False
+        return False
+    
+    def _has_adc_at_bottom(self):
+        """Check if an ADC digitizer item is present at the bottom."""
+        if self.list_widget.count() > 0:
+            last_item = self.list_widget.item(self.list_widget.count() - 1)
+            return last_item.data(Qt.UserRole + 1) if last_item else False
+        return False
+    
+    def get_chain(self, digitizer_config=None):
+        """Return the current SignalChain object with digitizer components.
+        
+        Args:
+            digitizer_config: Dictionary with digitizer configuration.
+                If None, uses stored config if available.
+        """
         self._rebuild_chain()
+        
+        # Use provided config or fall back to stored config
+        config = digitizer_config or self.digitizer_config
+        
+        # Add digitizer DAC and ADC to the chain if config available
+        if config and config['model'] == 'AD9082':
+            dac = hardware_models.AD9082_DAC(
+                carrier_power_dbm=config['carrier_power_dbm'],
+                gain_db=config['dac_gain_db'],
+                name='AD9082_DAC'
+            )
+            adc = hardware_models.AD9082_ADC(
+                gain_db=config['adc_gain_db'],
+                name='AD9082_ADC'
+            )
+            self.chain.set_digitizer(dac, adc)
+        
         return self.chain

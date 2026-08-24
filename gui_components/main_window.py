@@ -21,6 +21,7 @@ from .chain_view import ChainView
 from .parameter_panel import ParameterPanel
 from .diagram_panel import DiagramPanel
 from .results_panel import ResultsPanel
+from .digitizer_panel import DigitizerPanel
 
 
 class MainWindow(QMainWindow):
@@ -50,29 +51,34 @@ class MainWindow(QMainWindow):
         # Main vertical splitter (top: controls, bottom: results)
         main_splitter = QSplitter(Qt.Vertical)
         
-        # Top section: horizontal 3-panel layout
+        # Top section: horizontal 4-panel layout
         top_widget = QWidget()
         top_layout = QHBoxLayout(top_widget)
         top_layout.setContentsMargins(0, 0, 0, 0)
         
         top_splitter = QSplitter(Qt.Horizontal)
         
-        # Left: Component library
+        # 1. Digitizer Panel (extreme left)
+        self.digitizer_panel = DigitizerPanel()
+        self.digitizer_panel.digitizer_applied.connect(self._on_digitizer_applied)
+        top_splitter.addWidget(self.digitizer_panel)
+        
+        # 2. Component library
         self.library = ComponentLibrary()
         self.library.component_selected.connect(self._on_component_selected)
         top_splitter.addWidget(self.library)
         
-        # Middle: Parameter panel
+        # 3. Parameter panel
         self.param_panel = ParameterPanel()
         self.param_panel.add_component.connect(self._on_add_component)
         top_splitter.addWidget(self.param_panel)
         
-        # Right: Chain view
+        # 4. Chain view
         self.chain_view = ChainView()
         top_splitter.addWidget(self.chain_view)
         
-        # Set top splitter proportions
-        top_splitter.setSizes([300, 300, 400])
+        # Set top splitter proportions (4 columns)
+        top_splitter.setSizes([200, 300, 300, 400])
         
         top_layout.addWidget(top_splitter)
         main_splitter.addWidget(top_widget)
@@ -169,6 +175,10 @@ class MainWindow(QMainWindow):
         analyze_action.triggered.connect(self._analyze_chain)
         toolbar.addAction(analyze_action)
         
+    def _on_digitizer_applied(self, config):
+        """Handle digitizer settings being applied."""
+        self.chain_view.set_digitizer(config)
+        
     def _on_component_selected(self, category, comp_class):
         """Handle component selection from library."""
         self.param_panel.set_component(comp_class)
@@ -214,8 +224,12 @@ class MainWindow(QMainWindow):
         if not file_path:
             return
         
-        # Build chain data
-        chain_data = []
+        # Build chain data with digitizer config
+        save_data = {
+            'digitizer': self.digitizer_panel.get_digitizer_config(),
+            'components': []
+        }
+        
         for i in range(self.chain_view.list_widget.count()):
             item = self.chain_view.list_widget.item(i)
             component = item.data(Qt.UserRole)
@@ -236,12 +250,12 @@ class MainWindow(QMainWindow):
                     if isinstance(value, (int, float, str, bool)):
                         comp_info['parameters'][param_name] = value
             
-            chain_data.append(comp_info)
+            save_data['components'].append(comp_info)
         
         # Save to file
         try:
             with open(file_path, 'w') as f:
-                json.dump(chain_data, f, indent=2)
+                json.dump(save_data, f, indent=2)
             QMessageBox.information(self, "Success", "Chain saved successfully!")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save chain:\n{str(e)}")
@@ -257,10 +271,22 @@ class MainWindow(QMainWindow):
         
         try:
             with open(file_path, 'r') as f:
-                chain_data = json.load(f)
+                data = json.load(f)
             
             # Clear current chain
             self.chain_view.list_widget.clear()
+            
+            # Handle both old and new formats
+            if isinstance(data, dict) and 'components' in data:
+                # New format with digitizer config
+                if 'digitizer' in data:
+                    self.digitizer_panel.set_digitizer_config(data['digitizer'])
+                    # Also apply it to the chain view
+                    self.chain_view.set_digitizer(data['digitizer'])
+                chain_data = data['components']
+            else:
+                # Old format (just component list)
+                chain_data = data
             
             # Rebuild chain
             for comp_info in chain_data:
@@ -285,7 +311,8 @@ class MainWindow(QMainWindow):
             
     def _generate_diagram(self):
         """Generate a visual diagram of the chain."""
-        chain = self.chain_view.get_chain()
+        digitizer_config = self.digitizer_panel.get_digitizer_config()
+        chain = self.chain_view.get_chain(digitizer_config)
         
         if len(chain) == 0:
             QMessageBox.information(
@@ -301,7 +328,8 @@ class MainWindow(QMainWindow):
             
     def _analyze_chain(self):
         """Analyze the chain (gain and noise)."""
-        chain = self.chain_view.get_chain()
+        digitizer_config = self.digitizer_panel.get_digitizer_config()
+        chain = self.chain_view.get_chain(digitizer_config)
         
         if len(chain) == 0:
             QMessageBox.information(

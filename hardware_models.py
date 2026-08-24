@@ -9,7 +9,7 @@ import os
 import scipy.interpolate as interpolate
 from scipy.optimize import curve_fit
 
-from component import ActiveComponent, PassiveComponent
+from component import ActiveComponent, PassiveComponent, DACComponent, ADCComponent
 from utils import kb
 
 
@@ -17,6 +17,10 @@ def exponential(f, A, n, b):
     return A*f**-n +b
 
 class AD9082:
+    """
+    Legacy AD9082 class for backward compatibility.
+    For new code, use AD9082_DAC and AD9082_ADC separately.
+    """
     # note: currently, the dac phase noise slope is simply taken as -10dbm/hz per decade
     # this is not quite what is in the datasheet, but it is much easier to fit with an exponential
     # The largest differences vs the datasheet occur >100 Hz, where the DAC noise should be 
@@ -52,7 +56,108 @@ class AD9082:
             return 10**(self.adc_noise_density_dbm/10.)*1e-3
         else:
             return self.adc_noise_func(f)
+
+
+class AD9082_DAC(DACComponent):
+    """
+    AD9082 Digital-to-Analog Converter.
+    
+    Produces frequency-dependent phase noise that scales with carrier power.
+    """
+    
+    def __init__(self, carrier_power_dbm=0.0, gain_db=0.0, name=None):
+        """
+        Initialize AD9082 DAC.
         
+        Parameters
+        ----------
+        carrier_power_dbm : float
+            Carrier power in dBm (typically -30 to +10 dBm)
+        gain_db : float
+            DAC output gain in dB (default 0 for unity gain)
+        name : str, optional
+            Component name/label
+        """
+        super().__init__(name=name)
+        self.carrier_power_dbm = carrier_power_dbm
+        self.gain_db = gain_db
+        
+        # Initialize the phase noise model (same as legacy AD9082)
+        f_datasheet = np.asarray([0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000])
+        pnoise_dbc_simple = np.asarray([-45, -55, -65, -75, -85, -95, -105, -115, -125])
+        pnoise_W = 10**(pnoise_dbc_simple / 10) * 1e-3
+        self.popt, self.pcov = curve_fit(exponential, f_datasheet, pnoise_W)
+        
+    def gain(self, frequency):
+        """Return DAC gain in dB."""
+        if isinstance(frequency, np.ndarray):
+            return np.full_like(frequency, self.gain_db)
+        return self.gain_db
+    
+    def noise(self, frequency):
+        """
+        Return DAC phase noise power spectral density.
+        
+        Parameters
+        ----------
+        frequency : float or np.ndarray
+            Spectral/offset frequency in Hz
+            
+        Returns
+        -------
+        float or np.ndarray
+            Noise power spectral density in W/Hz
+        """
+        noise_dbc = 10 * np.log10(1e3 * exponential(frequency, self.popt[0], self.popt[1], self.popt[2]))
+        noise_dbm = noise_dbc + self.carrier_power_dbm
+        noise_W = 10**(noise_dbm / 10) * 1e-3
+        return noise_W
+
+
+class AD9082_ADC(ADCComponent):
+    """
+    AD9082 Analog-to-Digital Converter.
+    
+    Provides fixed white noise floor.
+    """
+    
+    def __init__(self, gain_db=0.0, name=None):
+        """
+        Initialize AD9082 ADC.
+        
+        Parameters
+        ----------
+        gain_db : float
+            ADC gain in dB (default 0 for unity gain)
+        name : str, optional
+            Component name/label
+        """
+        super().__init__(name=name)
+        self.gain_db = gain_db
+        self.adc_noise_density_dbm = -140  # Fixed white noise floor
+        
+    def gain(self, frequency):
+        """Return ADC gain in dB."""
+        if isinstance(frequency, np.ndarray):
+            return np.full_like(frequency, self.gain_db)
+        return self.gain_db
+    
+    def noise(self, frequency=None):
+        """
+        Return ADC noise power spectral density.
+        
+        Parameters
+        ----------
+        frequency : float or np.ndarray, optional
+            Frequency in Hz (not used, noise is white)
+            
+        Returns
+        -------
+        float
+            Noise power spectral density in W/Hz
+        """
+        return 10**(self.adc_noise_density_dbm / 10.0) * 1e-3
+
         
 
 class CryoElec_LNA:

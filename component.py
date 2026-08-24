@@ -88,3 +88,17 @@ class ActiveComponent(Component):
     
     def __init__(self, name=None):
         super().__init__(name=name, component_type='active')
+
+
+class DACComponent(Component):
+    """Base class for Digital-to-Analog Converter components."""
+    
+    def __init__(self, name=None):
+        super().__init__(name=name, component_type='dac')
+
+
+class ADCComponent(Component):
+    """Base class for Analog-to-Digital Converter components."""
+    
+    def __init__(self, name=None):
+        super().__init__(name=name, component_type='adc')

@@ -77,16 +77,16 @@ class ResultsPanel(QWidget):
         param_layout.addRow("  Carrier Freq:", self.carrier_freq_spin)
         
         self.start_spectral_spin = QDoubleSpinBox()
-        self.start_spectral_spin.setRange(0.001, 1e6)
-        self.start_spectral_spin.setValue(0.01)
-        self.start_spectral_spin.setSuffix(" kHz")
+        self.start_spectral_spin.setRange(0.001, 1e9)
+        self.start_spectral_spin.setValue(10.0)
+        self.start_spectral_spin.setSuffix(" Hz")
         self.start_spectral_spin.setDecimals(3)
         param_layout.addRow("  Start Offset:", self.start_spectral_spin)
         
         self.stop_spectral_spin = QDoubleSpinBox()
-        self.stop_spectral_spin.setRange(0.001, 1e6)
-        self.stop_spectral_spin.setValue(100.0)
-        self.stop_spectral_spin.setSuffix(" kHz")
+        self.stop_spectral_spin.setRange(0.001, 1e9)
+        self.stop_spectral_spin.setValue(100000.0)
+        self.stop_spectral_spin.setSuffix(" Hz")
         self.stop_spectral_spin.setDecimals(3)
         param_layout.addRow("  Stop Offset:", self.stop_spectral_spin)
         
@@ -105,6 +105,10 @@ class ResultsPanel(QWidget):
         
         self.show_contributions_check = QCheckBox("Show Individual Component Contributions (Noise)")
         param_layout.addRow("", self.show_contributions_check)
+        
+        self.dbc_units_check = QCheckBox("Use dBc/Hz units (relative to carrier)")
+        self.dbc_units_check.setToolTip("Convert noise units to dBc/Hz (dB below carrier) instead of dBm/Hz")
+        param_layout.addRow("", self.dbc_units_check)
         
         param_group.setLayout(param_layout)
         left_layout.addWidget(param_group)
@@ -168,8 +172,8 @@ class ResultsPanel(QWidget):
             gain_start = self.gain_start_freq_spin.value() * 1e9
             gain_stop = self.gain_stop_freq_spin.value() * 1e9
             carrier_freq = self.carrier_freq_spin.value() * 1e9
-            start_spectral = self.start_spectral_spin.value() * 1e3
-            stop_spectral = self.stop_spectral_spin.value() * 1e3
+            start_spectral = self.start_spectral_spin.value()  # Already in Hz
+            stop_spectral = self.stop_spectral_spin.value()  # Already in Hz
             num_points = self.num_points_spin.value()
             is_log = self.spacing_combo.currentText() == "Logarithmic"
             show_contributions = self.show_contributions_check.isChecked()
@@ -204,8 +208,8 @@ class ResultsPanel(QWidget):
                 self.contributions_data = {}
                 
                 for spectral_freq in self.spectral_freq_data:
-                    total_noise, contributions = self.chain.noise_at_point(
-                        len(self.chain) - 1, carrier_freq, spectral_freq, contributions=True
+                    total_noise, contributions = self.chain.output_noise(
+                        carrier_freq, spectral_freq, contributions=True
                     )
                     self.noise_data.append(total_noise)
                     
@@ -225,42 +229,52 @@ class ResultsPanel(QWidget):
             # Plot both
             self.figure.clear()
             
-            # Gain plot (top)
+            # Gain plot (top) - Always linear scale on x-axis, display in Hz
             ax1 = self.figure.add_subplot(2, 1, 1)
-            if is_log:
-                ax1.semilogx(self.freq_data / 1e9, self.gain_data, 'b-', linewidth=2)
-            else:
-                ax1.plot(self.freq_data / 1e9, self.gain_data, 'b-', linewidth=2)
+            ax1.plot(self.freq_data, self.gain_data, 'b-', linewidth=2)
             
             ax1.grid(True, alpha=0.3)
-            ax1.set_xlabel('Frequency (GHz)', fontsize=11)
+            ax1.set_xlabel('Frequency (Hz)', fontsize=11)
             ax1.set_ylabel('Total Gain (dB)', fontsize=11)
             ax1.set_title(f'System Gain vs Frequency: {self.chain.name}', 
                          fontsize=12, fontweight='bold')
             
-            # Noise plot (bottom)
+            # Noise plot (bottom) - Log scale on x-axis, convert to dB units
             ax2 = self.figure.add_subplot(2, 1, 2)
-            if is_log:
-                ax2.loglog(self.spectral_freq_data / 1e3, self.noise_data, 
-                         'b-', linewidth=2, label='Total Noise')
+            
+            # Determine if using dBc/Hz or dBm/Hz
+            use_dbc = self.dbc_units_check.isChecked()
+            
+            if use_dbc:
+                # Convert to dBc/Hz (dB relative to carrier power)
+                # Assume carrier power of 0 dBm (1 mW) for reference
+                # dBc/Hz = 10*log10(noise_W/Hz) - carrier_power_dBm + 30
+                carrier_power_dbm = 0  # Reference carrier at 0 dBm
+                noise_db = 10 * np.log10(self.noise_data) - carrier_power_dbm + 30
+                ylabel_text = 'Noise PSD (dBc/Hz)'
             else:
-                ax2.semilogy(self.spectral_freq_data / 1e3, self.noise_data, 
-                           'b-', linewidth=2, label='Total Noise')
+                # Convert to dBm/Hz
+                # dBm/Hz = 10*log10(noise_W/Hz) + 30
+                noise_db = 10 * np.log10(self.noise_data) + 30
+                ylabel_text = 'Noise PSD (dBm/Hz)'
+            
+            ax2.semilogx(self.spectral_freq_data, noise_db, 'b-', linewidth=2, label='Total Noise')
             
             # Plot individual contributions if requested
             if show_contributions and self.contributions_data:
                 for label, noise_vals in self.contributions_data.items():
-                    if is_log:
-                        ax2.loglog(self.spectral_freq_data / 1e3, noise_vals, 
-                                 '--', alpha=0.6, linewidth=1.5, label=label)
+                    noise_vals_array = np.array(noise_vals)
+                    if use_dbc:
+                        noise_vals_db = 10 * np.log10(noise_vals_array) - carrier_power_dbm + 30
                     else:
-                        ax2.semilogy(self.spectral_freq_data / 1e3, noise_vals, 
-                                   '--', alpha=0.6, linewidth=1.5, label=label)
+                        noise_vals_db = 10 * np.log10(noise_vals_array) + 30
+                    ax2.semilogx(self.spectral_freq_data, noise_vals_db, 
+                             '--', alpha=0.6, linewidth=1.5, label=label)
                 ax2.legend(fontsize=8, loc='best')
             
             ax2.grid(True, alpha=0.3)
-            ax2.set_xlabel('Offset Frequency (kHz)', fontsize=11)
-            ax2.set_ylabel('Noise PSD (W/Hz)', fontsize=11)
+            ax2.set_xlabel('Offset Frequency (Hz)', fontsize=11)
+            ax2.set_ylabel(ylabel_text, fontsize=11)
             ax2.set_title(f'Output Noise Spectrum at {carrier_freq/1e9:.2f} GHz Carrier', 
                         fontsize=12, fontweight='bold')
             
@@ -273,14 +287,16 @@ class ResultsPanel(QWidget):
             min_freq = self.freq_data[np.argmin(self.gain_data)] / 1e9
             max_freq = self.freq_data[np.argmax(self.gain_data)] / 1e9
             
-            min_noise = np.min(self.noise_data)
-            max_noise = np.max(self.noise_data)
-            avg_noise = np.mean(self.noise_data)
+            min_noise_db = np.min(noise_db)
+            max_noise_db = np.max(noise_db)
+            avg_noise_db = np.mean(noise_db)
+            
+            noise_unit = 'dBc/Hz' if use_dbc else 'dBm/Hz'
             
             results_text = (f"<b>Gain:</b> Min={min_gain:.2f} dB @ {min_freq:.3f} GHz  |  "
                           f"Max={max_gain:.2f} dB @ {max_freq:.3f} GHz<br>"
-                          f"<b>Noise:</b> Min={min_noise:.2e} W/Hz  |  "
-                          f"Max={max_noise:.2e} W/Hz  |  Avg={avg_noise:.2e} W/Hz")
+                          f"<b>Noise:</b> Min={min_noise_db:.2f} {noise_unit}  |  "
+                          f"Max={max_noise_db:.2f} {noise_unit}  |  Avg={avg_noise_db:.2f} {noise_unit}")
             self.results_label.setText(results_text)
             
         except Exception as e:

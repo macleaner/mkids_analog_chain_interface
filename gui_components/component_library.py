@@ -30,7 +30,6 @@ class ComponentLibrary(QTreeWidget):
             "Cables": [],
             "Attenuators": [],
             "Filters": [],
-            "Converters": [],
             "Other": []
         }
         
@@ -55,7 +54,8 @@ class ComponentLibrary(QTreeWidget):
             elif 'Filter' in name:
                 self.categories["Filters"].append((name, obj))
             elif 'AD9082' in name or 'DAC' in name or 'ADC' in name:
-                self.categories["Converters"].append((name, obj))
+                # Skip converter components - these are configured via Digitizer Panel
+                continue
             else:
                 self.categories["Other"].append((name, obj))
         

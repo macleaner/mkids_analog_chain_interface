@@ -26,7 +26,51 @@ class SignalChain:
         self.name = name
         self.components = []
         self.labels = {}  # Map label -> index
+        self.dac = None  # DAC at start of chain
+        self.adc = None  # ADC at end of chain
         
+    def set_digitizer(self, dac, adc):
+        """
+        Set the DAC and ADC components for the chain.
+        
+        Parameters
+        ----------
+        dac : DACComponent
+            The DAC component (placed at start of chain)
+        adc : ADCComponent
+            The ADC component (placed at end of chain)
+        """
+        self.dac = dac
+        self.adc = adc
+    
+    def get_digitizer(self):
+        """
+        Get the DAC and ADC components.
+        
+        Returns
+        -------
+        tuple
+            (dac, adc) components
+        """
+        return (self.dac, self.adc)
+    
+    def get_full_component_list(self):
+        """
+        Get the complete component list including DAC and ADC.
+        
+        Returns
+        -------
+        list
+            [DAC, component1, component2, ..., ADC]
+        """
+        full_list = []
+        if self.dac is not None:
+            full_list.append(self.dac)
+        full_list.extend(self.components)
+        if self.adc is not None:
+            full_list.append(self.adc)
+        return full_list
+    
     def add_component(self, component, label=None):
         """
         Add a component to the end of the chain.
@@ -201,7 +245,7 @@ class SignalChain:
     
     def total_gain(self, frequency):
         """
-        Calculate total gain through entire chain.
+        Calculate total gain through entire chain including DAC and ADC.
         
         Parameters
         ----------
@@ -213,13 +257,25 @@ class SignalChain:
         float or np.ndarray
             Total gain in dB
         """
-        if len(self.components) == 0:
-            return 0.0
-        return self.gain_between(0, len(self.components) - 1, frequency)
+        total_gain_db = 0.0
+        
+        # Add DAC gain
+        if self.dac is not None:
+            total_gain_db += self.dac.gain(frequency)
+        
+        # Add regular component gains
+        if len(self.components) > 0:
+            total_gain_db += self.gain_between(0, len(self.components) - 1, frequency)
+        
+        # Add ADC gain
+        if self.adc is not None:
+            total_gain_db += self.adc.gain(frequency)
+        
+        return total_gain_db
     
-    def output_noise(self, carrier_frequency, spectral_frequency):
+    def output_noise(self, carrier_frequency, spectral_frequency, contributions=False):
         """
-        Calculate total noise at the output of the chain.
+        Calculate total noise at the output of the chain including DAC and ADC.
         
         Parameters
         ----------
@@ -227,15 +283,91 @@ class SignalChain:
             Carrier frequency in Hz (used for gain calculations)
         spectral_frequency : float or np.ndarray
             Spectral/offset frequency in Hz (used for noise spectral shape)
+        contributions : bool, optional
+            If True, return a dict with individual component contributions
             
         Returns
         -------
         float or np.ndarray
             Total output noise power spectral density in W/Hz
+        dict (if contributions=True)
+            Dictionary mapping component labels to their noise contributions
         """
-        if len(self.components) == 0:
-            return 0.0
-        return self.noise_at_point(len(self.components) - 1, carrier_frequency, spectral_frequency)
+        total_noise_W = 0.0
+        noise_dict = {}
+        
+        # Calculate gain from each component to output
+        # Gain from DAC to output: gain of all components + ADC
+        # Gain from regular components: gain from that component to end + ADC
+        # ADC noise: no further gain (already at output)
+        
+        # DAC noise contribution
+        if self.dac is not None and hasattr(self.dac, 'noise'):
+            try:
+                dac_noise = self.dac.noise(spectral_frequency)
+                if dac_noise > 0:
+                    # Gain from DAC output through all components to ADC output
+                    gain_to_output = 0.0
+                    if len(self.components) > 0:
+                        gain_to_output += self.gain_between(0, len(self.components) - 1, carrier_frequency)
+                    if self.adc is not None:
+                        gain_to_output += self.adc.gain(carrier_frequency)
+                    
+                    dac_noise_at_output_dbm = to_dbm(dac_noise) + gain_to_output
+                    dac_noise_at_output_W = to_W(dac_noise_at_output_dbm)
+                    total_noise_W += dac_noise_at_output_W
+                    
+                    if contributions:
+                        noise_dict['AD9082_DAC'] = dac_noise_at_output_W
+            except:
+                pass
+        
+        # Regular component noise contributions
+        if len(self.components) > 0:
+            for idx in range(len(self.components)):
+                component = self.components[idx]
+                
+                if hasattr(component, 'noise'):
+                    try:
+                        noise_power = component.noise(spectral_frequency)
+                    except TypeError:
+                        try:
+                            noise_power = component.noise()
+                        except:
+                            continue
+                    
+                    if noise_power > 0:
+                        # Gain from this component to output (through remaining components + ADC)
+                        gain_to_output = 0.0
+                        if idx < len(self.components) - 1:
+                            gain_to_output += self.gain_between(idx, len(self.components) - 1, carrier_frequency)
+                        if self.adc is not None:
+                            gain_to_output += self.adc.gain(carrier_frequency)
+                        
+                        noise_at_output_dbm = to_dbm(noise_power) + gain_to_output
+                        noise_at_output_W = to_W(noise_at_output_dbm)
+                        total_noise_W += noise_at_output_W
+                        
+                        if contributions:
+                            label = self._get_label_for_index(idx)
+                            noise_dict[label] = noise_at_output_W
+        
+        # ADC noise contribution (already at output, no further gain)
+        if self.adc is not None and hasattr(self.adc, 'noise'):
+            try:
+                adc_noise = self.adc.noise(spectral_frequency)
+                if adc_noise > 0:
+                    total_noise_W += adc_noise
+                    
+                    if contributions:
+                        noise_dict['AD9082_ADC'] = adc_noise
+            except:
+                pass
+        
+        if contributions:
+            return total_noise_W, noise_dict
+        else:
+            return total_noise_W
     
     def summary(self):
         """
