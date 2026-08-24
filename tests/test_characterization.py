@@ -60,12 +60,7 @@ COMPONENT_SPECS = {
 # Components whose snapshot records physically wrong behaviour. Documented here
 # so the snapshot is never mistaken for a correctness claim. See the notes in
 # the repo issue list; fixing these is a deliberate, separate change.
-KNOWN_BAD = {
-    "SMA_cables": "loss scales as length**2 (length applied in __init__ and again in gain)",
-    "SMA_FM_F141_cables": "loss scales as length**2 (same double-multiply)",
-    "SMA_RG58C_cables": "returns POSITIVE gain for a lossy cable (unnegated attenuation)",
-    "SMA_RG174A_cables": "returns POSITIVE gain for a lossy cable (unnegated attenuation)",
-}
+KNOWN_BAD = {}
 
 
 def _jsonable(value):

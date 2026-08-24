@@ -215,6 +215,29 @@ The tool uses **direct noise power propagation** (not noise figure):
 
 For thermal components (attenuators): `N = k_B × T` (W/Hz)
 
+#### Input- vs output-referred noise
+
+Whether a component's *own* gain is applied to its noise depends on where that
+noise is referred to. Each component declares this via `noise_reference`:
+
+| `noise_reference` | Meaning | Applies to |
+|---|---|---|
+| `"input"` (default) | Noise is quoted at the input, so the component's own gain acts on it | Amplifiers - a noise temperature is an input-referred quantity |
+| `"output"` | Noise is generated at the output, so the component does not act on it | Attenuators, cables, filters, DAC/ADC |
+
+The attenuator is the clearest case: its Johnson noise is `k_B × T` **at its
+output**, whatever the attenuation. A 30 dB attenuator at 300 K does not
+attenuate its own thermal noise, so a lone attenuator contributes exactly
+`k_B × T` at the chain output.
+
+`noise_at_point()` and `output_noise()` share one propagation rule, so they
+agree at the end of the chain.
+
+> **Known gap:** `noise_at_point()` iterates only the chain components and
+> ignores the DAC/ADC, so it omits upstream DAC phase noise - which often
+> dominates the budget. Use `output_noise()` for a complete figure until this is
+> addressed.
+
 ### Gain Calculation
 
 Gains are calculated in dB and summed along the chain:

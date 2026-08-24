@@ -519,28 +519,22 @@ class _RoomTemperatureCable(PassiveComponent):
     """
     Shared implementation for room-temperature cables with a single loss curve.
 
-    ``length_scaling_applied_twice`` reproduces a latent bug in two of the
-    original models, where the length was folded into the datasheet array in
-    __init__ and multiplied in again in gain(), making loss scale as length**2.
-    It is preserved here so this refactor is numerics-preserving; see KNOWN_BAD
-    in tests/test_characterization.py.
+    ``db_per_m`` is per-metre loss in dB and must be negative; the total is
+    scaled by length exactly once, in gain().
     """
 
     frequencies_hz = None
     db_per_m = None
     extrapolate = False
-    length_scaling_applied_twice = False
 
     def __init__(self, length_m, name=None):
         super().__init__(name=name, params={"length_m": length_m})
         self.length = length_m
 
         fill = 'extrapolate' if self.extrapolate else np.nan
-        curve = np.asarray(self.db_per_m, dtype=float)
-        if self.length_scaling_applied_twice:
-            curve = curve * self.length
         self.atten_per_m = interpolate.interp1d(
-            np.asarray(self.frequencies_hz), curve,
+            np.asarray(self.frequencies_hz),
+            np.asarray(self.db_per_m, dtype=float),
             fill_value=fill, bounds_error=False)
 
     def gain(self, f):
@@ -557,8 +551,8 @@ class SMA_cables(_RoomTemperatureCable):
     """
 
     frequencies_hz = np.asarray([0.001, 0.25, 0.5, 1, 2.5, 3.0]) * 1e9
+    # Measured on a 10 ft cable; 3.2/10 converts the total to dB per metre.
     db_per_m = np.asarray([-0.2, -0.6, -0.8, -1.2, -1.8, -2.2]) * 3.2 / 10.
-    length_scaling_applied_twice = True
 
 
 @register("cable.fm_f141", category="Cables",
@@ -571,7 +565,6 @@ class SMA_FM_F141_cables(_RoomTemperatureCable):
 
     frequencies_hz = np.asarray([0.0, 1, 2.0, 5, 10, 18]) * 1e9
     db_per_m = np.asarray([0.0, -0.37, -0.54, -0.89, -1.35, -1.9])
-    length_scaling_applied_twice = True
 
 
 @register("cable.rg58c", category="Cables", label="RG58C/U (room temp)",
@@ -583,7 +576,9 @@ class SMA_RG58C_cables(_RoomTemperatureCable):
     """
 
     frequencies_hz = np.asarray([0.0, 0.01, 0.1, 1.0, 5.0]) * 1e9
-    db_per_m = np.asarray([0.0, 4.59, 16.08, 65.62, 196.85]) / 100.0
+    # Datasheet lists attenuation as positive dB/100 m; negated here because
+    # gain() must return loss as a negative gain.
+    db_per_m = -np.asarray([0.0, 4.59, 16.08, 65.62, 196.85]) / 100.0
     extrapolate = True
 
 
@@ -596,5 +591,7 @@ class SMA_RG174A_cables(_RoomTemperatureCable):
     """
 
     frequencies_hz = np.asarray([0.0, 0.1, 0.4, 1.0]) * 1e9
-    db_per_m = np.asarray([0.0, 27.56, 62.34, 104.99]) / 100.0
+    # Datasheet lists attenuation as positive dB/100 m; negated here because
+    # gain() must return loss as a negative gain.
+    db_per_m = -np.asarray([0.0, 27.56, 62.34, 104.99]) / 100.0
     extrapolate = True

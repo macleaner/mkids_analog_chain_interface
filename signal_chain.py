@@ -49,6 +49,20 @@ def _has_any_noise(noise_power):
     return bool(np.any(arr > 0))
 
 
+def _noise_origin_index(component, idx):
+    """
+    First component index that acts on this component's noise.
+
+    Input-referred noise (an amplifier's noise temperature) is amplified by the
+    component's own gain, so propagation starts at the component itself.
+    Output-referred noise (an attenuator's Johnson noise, DAC phase noise) is
+    already at the component's output, so propagation starts downstream of it.
+    """
+    if getattr(component, "noise_reference", "input") == "output":
+        return idx + 1
+    return idx
+
+
 class SignalChain:
     """
     Manages an ordered sequence of RF components and calculates
@@ -248,12 +262,13 @@ class SignalChain:
 
         # Every component up to and including the reference point.
         for idx in range(ref_idx + 1):
-            noise_power = _evaluate_noise(self.components[idx], spectral_frequency)
+            component = self.components[idx]
+            noise_power = _evaluate_noise(component, spectral_frequency)
             if not _has_any_noise(noise_power):
                 continue
 
-            # Gain from this component to the reference point, at the carrier.
-            gain_db = self.gain_between(idx, ref_idx, carrier_frequency)
+            gain_db = self._gain_acting_on_noise(
+                component, idx, ref_idx, carrier_frequency)
 
             # N_out_dBm = N_in_dBm + G_dB
             noise_at_ref_W = to_W(to_dbm(noise_power) + gain_db)
@@ -273,6 +288,19 @@ class SignalChain:
             if label_idx == idx:
                 return label
         return f"Component_{idx}"
+
+    def _gain_acting_on_noise(self, component, idx, ref_idx, carrier_frequency):
+        """
+        Total gain applied to a component's noise on its way to ``ref_idx``.
+
+        Whether the component's own gain is included depends on its
+        ``noise_reference``; see ``_noise_origin_index``.
+        """
+        start = _noise_origin_index(component, idx)
+        if start > ref_idx:
+            # Nothing downstream acts on it - it is already at the reference.
+            return 0.0
+        return self.gain_between(start, ref_idx, carrier_frequency)
 
     # ------------------------------------------------------------------
     # Serialization
@@ -481,39 +509,43 @@ class SignalChain:
                 if n_components > 0:
                     gain_to_output = gain_to_output + self.gain_between(
                         0, n_components - 1, carrier_frequency)
+                # Phase noise is output-referred, so the DAC's own gain is not
+                # applied to it; an input-referred converter would need it.
+                if getattr(self.dac, "noise_reference", "input") == "input":
+                    gain_to_output = gain_to_output + self.dac.gain(carrier_frequency)
                 contribution = to_W(to_dbm(dac_noise) + gain_to_output)
                 total_noise_W = total_noise_W + contribution
                 if contributions:
                     noise_dict[self.dac.name] = contribution
 
-        # Chain components.
+        # Chain components. Uses the same propagation rule as noise_at_point,
+        # so the two methods agree by construction.
         for idx in range(n_components):
-            noise_power = _evaluate_noise(self.components[idx], spectral_frequency)
+            component = self.components[idx]
+            noise_power = _evaluate_noise(component, spectral_frequency)
             if not _has_any_noise(noise_power):
                 continue
 
-            # NOTE: for the final component this deliberately excludes that
-            # component's own gain, whereas noise_at_point() includes it via
-            # gain_between(idx, ref_idx). The two methods therefore disagree on
-            # the last component by its own gain. Preserved as-is; settling on
-            # one convention is a physics decision, not a refactor.
-            gain_to_output = adc_gain
-            if idx < n_components - 1:
-                gain_to_output = gain_to_output + self.gain_between(
-                    idx, n_components - 1, carrier_frequency)
+            gain_to_output = adc_gain + self._gain_acting_on_noise(
+                component, idx, n_components - 1, carrier_frequency)
 
             contribution = to_W(to_dbm(noise_power) + gain_to_output)
             total_noise_W = total_noise_W + contribution
             if contributions:
                 noise_dict[self._get_label_for_index(idx)] = contribution
 
-        # ADC noise is already at the output, so it sees no further gain.
+        # ADC noise is at the end of the chain, so nothing downstream acts on it
+        # unless it is input-referred, in which case its own gain applies.
         if self.adc is not None:
             adc_noise = _evaluate_noise(self.adc, spectral_frequency)
             if _has_any_noise(adc_noise):
-                total_noise_W = total_noise_W + adc_noise
+                if getattr(self.adc, "noise_reference", "input") == "input":
+                    contribution = to_W(to_dbm(adc_noise) + adc_gain)
+                else:
+                    contribution = adc_noise
+                total_noise_W = total_noise_W + contribution
                 if contributions:
-                    noise_dict[self.adc.name] = adc_noise
+                    noise_dict[self.adc.name] = contribution
 
         if contributions:
             return total_noise_W, noise_dict
