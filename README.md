@@ -235,7 +235,7 @@ The carrier sets the **level**; the spectral frequency sets the **shape**:
 | Amplifiers | carrier frequency (noise temperature vs RF) | white |
 | DAC | carrier power (+ any carrier-frequency dependence) | 1/f skirt |
 | Attenuator | temperature, `k_B·T` | white |
-| ADC | fixed floor | white |
+| ADC | carrier frequency (datasheet SNR vs input frequency) | white |
 
 A source that is white near the carrier computes its level from the carrier and
 returns it flat across the spectral axis - `component.flat_in_spectral(level,
@@ -243,6 +243,18 @@ spectral_frequency)` does that. A source with spectral structure returns that
 shape, shifted by whatever level the carrier implies. `AD9082_DAC` shows the
 pattern: its `carrier_level_db()` hook is the documented place for a measured
 carrier dependence, currently 0 dB because the fitted model has none.
+
+`AD9082_ADC` derives its floor from the datasheet SNR versus input frequency,
+converting SNR (dB below full scale) to a PSD using the full-scale level and
+Nyquist bandwidth the SNR was quoted under. Those two live as class attributes
+rather than parameters, because an SNR spec only converts to a PSD given the
+conditions it was measured under.
+
+> **Datasheet discrepancy worth checking:** the AD9082 also quotes a flat
+> -140 dBm/Hz noise spectral density, which this model used previously. The
+> SNR-derived figure is 3.4x (at 3 GHz) to 9.5x (at 100 MHz) *lower*. The two
+> specs are not reconcilable by unit conversion, so if your ADC noise matters,
+> confirm which applies to your configuration.
 
 Because every source shares the signature, sweeping either axis returns a result
 shaped like that axis, and the chain never has to know which kind of source it

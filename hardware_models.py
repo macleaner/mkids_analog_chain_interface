@@ -149,13 +149,35 @@ class AD9082_DAC(DACComponent):
           ))
 class AD9082_ADC(ADCComponent):
     """
-    AD9082 Analog-to-Digital Converter. Fixed white noise floor.
+    AD9082 Analog-to-Digital Converter.
+
+    The noise floor is derived from the datasheet SNR versus input frequency, so
+    it varies with the carrier frequency and is white in spectral frequency.
     """
+
+    #: Datasheet SNR versus input frequency, in dB relative to full scale.
+    snr_frequencies_hz = np.asarray([0.001, 1, 1.5, 2, 2.5, 3]) * 1e9
+    snr_dbfs = np.asarray([56, 55.5, 55, 54.5, 52, 51.5])
+
+    #: Conditions the SNR figures were quoted under. An SNR spec only converts
+    #: to a power spectral density given the full-scale level and the bandwidth
+    #: the noise was integrated over, so these belong to the datasheet rather
+    #: than being free knobs. Override on a subclass for a different part or a
+    #: different operating configuration.
+    full_scale_dbm = 1.0
+    nyquist_bandwidth_hz = 3e9
 
     def __init__(self, gain_db=0.0, name=None):
         super().__init__(name=name, params={"gain_db": gain_db})
         self.gain_db = gain_db
-        self.adc_noise_density_dbm = -140  # Fixed white noise floor
+
+        # SNR (dB below full scale) -> noise power (dBm) -> W -> W/Hz.
+        noise_w_per_hz = (
+            10**((self.full_scale_dbm - self.snr_dbfs) / 10) * 1e-3
+            / self.nyquist_bandwidth_hz)
+        self.noise_f = interpolate.interp1d(
+            self.snr_frequencies_hz, noise_w_per_hz,
+            fill_value='extrapolate', bounds_error=False)
 
     def gain(self, carrier_frequency):
         """Return ADC gain in dB."""
@@ -165,14 +187,13 @@ class AD9082_ADC(ADCComponent):
 
     def noise(self, carrier_frequency, spectral_frequency):
         """
-        Return ADC noise PSD in W/Hz.
+        Return ADC noise PSD in W/Hz at the ADC input.
 
-        A fixed white floor, so flat in both frequencies. The datasheet does
-        give SNR versus carrier frequency (see the legacy AD9082 helper); wiring
-        that in would make this carrier-dependent.
+        Interpolated from the datasheet SNR curve at the carrier frequency, and
+        white across the spectral axis.
         """
-        level = 10**(self.adc_noise_density_dbm / 10.0) * 1e-3
-        return flat_in_spectral(level, spectral_frequency)
+        return flat_in_spectral(self.noise_f(carrier_frequency),
+                                spectral_frequency)
 
 
 @register("amplifier.cryoelec_lna", category="Amplifiers",

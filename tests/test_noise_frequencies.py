@@ -115,15 +115,52 @@ def test_dac_carrier_level_hook_is_a_documented_no_op():
     assert float(dac.noise(1e8, 1e3)) == float(dac.noise(2.5e9, 1e3))
 
 
-def test_attenuator_and_adc_are_flat_in_both_axes():
+def test_attenuator_is_flat_in_both_axes():
     atten = registry.create("attenuator",
                             {"attenuation": -10, "temperature": 300})
-    adc = _make("converter.ad9082_adc")
-    for component in (atten, adc):
-        grid = [float(component.noise(c, s))
-                for c in CARRIER_FREQS for s in SPECTRAL_FREQS]
-        assert np.allclose(grid, grid[0], rtol=0.0, atol=0.0)
+    grid = [float(atten.noise(c, s))
+            for c in CARRIER_FREQS for s in SPECTRAL_FREQS]
+    assert np.allclose(grid, grid[0], rtol=0.0, atol=0.0)
     assert float(atten.noise(1.5e9, 1e3)) == pytest.approx(kb * 300, rel=1e-12)
+
+
+def test_adc_noise_follows_the_datasheet_snr_curve():
+    """
+    The ADC floor comes from SNR versus input frequency, so it rises with the
+    carrier. It replaced a flat -140 dBm/Hz figure.
+    """
+    adc = _make("converter.ad9082_adc")
+    values = [float(adc.noise(f, 1e3)) for f in (1e9, 1.5e9, 2e9, 2.5e9, 3e9)]
+    # SNR degrades with frequency, so the noise floor rises monotonically.
+    assert all(a < b for a, b in zip(values, values[1:]))
+
+
+def test_adc_noise_matches_the_datasheet_arithmetic():
+    """SNR (dB below full scale) -> dBm -> W -> W/Hz, at a datasheet point."""
+    from hardware_models import AD9082_ADC
+
+    adc = _make("converter.ad9082_adc")
+    # 1.5 GHz is a datasheet point: SNR 55 dBFS.
+    expected = (10**((AD9082_ADC.full_scale_dbm - 55.0) / 10) * 1e-3
+                / AD9082_ADC.nyquist_bandwidth_hz)
+    assert float(adc.noise(1.5e9, 1e3)) == pytest.approx(expected, rel=1e-12)
+
+
+def test_adc_reproduces_the_legacy_helper_curve():
+    """The legacy AD9082 shim carries the same curve; they must not diverge."""
+    from hardware_models import AD9082
+
+    adc = _make("converter.ad9082_adc")
+    legacy = AD9082()
+    for f in (1e8, 1e9, 1.5e9, 2.5e9, 3e9):
+        assert float(adc.noise(f, 1e3)) == pytest.approx(
+            float(legacy.adc_noise(f)), rel=1e-12)
+
+
+def test_adc_noise_is_white_in_spectral():
+    adc = _make("converter.ad9082_adc")
+    values = [float(adc.noise(1.5e9, f)) for f in SPECTRAL_FREQS]
+    assert np.allclose(values, values[0], rtol=0.0, atol=0.0)
 
 
 # ----------------------------------------------------------------------
