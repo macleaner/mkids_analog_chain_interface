@@ -28,7 +28,7 @@ def test_output_noise_accepts_an_array_of_offset_frequencies(sample_chain):
 
 def test_noise_at_point_accepts_an_array(sample_chain):
     offsets = np.logspace(0, 5, 25)
-    result = sample_chain.noise_at_point("LNA", 1.5e9, offsets)
+    result = sample_chain.noise_at_point("LNA", 1.5e9, offsets, at="output")
     assert np.shape(result) == offsets.shape
 
 
@@ -92,9 +92,9 @@ def test_a_failing_noise_model_is_not_silently_treated_as_noiseless():
 
 def test_noise_methods_agree_at_the_end_of_the_chain():
     """
-    output_noise() and noise_at_point(last) must give the same answer. They used
-    to differ by the final component's own gain; both now share one propagation
-    rule.
+    With no digitizer, the output plane is the last component's output plane, so
+    the two methods must give the same answer. They used to differ by the final
+    component's own gain; both now share one propagation rule.
     """
     chain = SignalChain(name="convention")
     chain.add_component(
@@ -104,10 +104,11 @@ def test_noise_methods_agree_at_the_end_of_the_chain():
         registry.create("attenuator", {"attenuation": -6, "temperature": 300}),
         label="B")
 
-    assert chain.noise_at_point("B", 1.5e9, 1e3) == pytest.approx(
+    assert chain.noise_at_point("B", 1.5e9, 1e3, at="output") == pytest.approx(
         chain.output_noise(1.5e9, 1e3), rel=1e-12)
 
-    _, point_parts = chain.noise_at_point("B", 1.5e9, 1e3, contributions=True)
+    _, point_parts = chain.noise_at_point(
+        "B", 1.5e9, 1e3, contributions=True, at="output")
     _, output_parts = chain.output_noise(1.5e9, 1e3, contributions=True)
     assert point_parts == pytest.approx(output_parts, rel=1e-12)
 
@@ -142,32 +143,163 @@ def test_amplifier_noise_is_amplified_by_its_own_gain():
     assert chain.output_noise(1.5e9, 1.5e9) == pytest.approx(expected, rel=1e-9)
 
 
-def test_noise_at_point_ignores_the_digitizer():
-    """
-    Documents a known gap, not desired behaviour: noise_at_point() iterates only
-    self.components, so it omits DAC phase noise even though the DAC is upstream
-    of every point in the chain. Since the DAC often dominates the budget, the
-    method understates noise at an interior point whenever a digitizer is set.
+def _digitizer_chain():
+    """LNA then a lossy stage into the ADC - little gain before digitizing."""
+    chain = SignalChain(name="referral")
+    chain.add_component(registry.create("amplifier.asu_3ghz_lna", {}), label="LNA")
+    chain.add_component(
+        registry.create("cable.fm_f141", {"length_m": 2.0}), label="OutCable")
+    chain.add_component(
+        registry.create("attenuator", {"attenuation": -20, "temperature": 300}),
+        label="PreAdcAtten")
+    chain.set_digitizer(
+        registry.create("converter.ad9082_dac", {"carrier_power_dbm": -20.0}),
+        registry.create("converter.ad9082_adc", {}))
+    return chain
 
-    output_noise() minus the two converter contributions equals it exactly,
-    which is what this pins.
+
+def test_every_source_appears_in_an_interior_budget():
     """
-    chain = SignalChain(name="gap")
+    A budget refers *all* sources to the plane, so both converters appear at an
+    interior point - the DAC referred forward, the ADC referred backward.
+    """
+    chain = _digitizer_chain()
+    budget = chain.noise_budget("LNA", 1.5e9, 1e3, at="input")
+    labels = {c.label for c in budget.contributions}
+    assert {"AD9082_DAC", "AD9082_ADC", "LNA", "PreAdcAtten"} <= labels
+
+
+def test_downstream_sources_are_referred_backward():
+    """A source after the plane is divided by the gain between them."""
+    chain = _digitizer_chain()
+    budget = chain.noise_budget("LNA", 1.5e9, 1e3, at="input")
+    by_label = {c.label: c for c in budget.contributions}
+
+    adc = by_label["AD9082_ADC"]
+    # The LNA input plane sits just after the DAC, and the ADC's noise is
+    # defined at the chain output, so the referral is the negative of the gain
+    # between those two planes.
+    expected = float(chain.dac.gain(1.5e9)) - float(chain.total_gain(1.5e9))
+    assert float(adc.referral_gain_db) == pytest.approx(expected, rel=1e-9)
+
+    # This chain has positive net gain, so referring the ADC backward shrinks it.
+    assert expected < 0
+    assert float(adc.power_w) < float(adc.intrinsic_w)
+
+
+def test_upstream_sources_are_referred_forward():
+    """A source before the plane picks up the gains between it and the plane."""
+    chain = _digitizer_chain()
+    budget = chain.noise_budget("PreAdcAtten", 1.5e9, 1e3, at="input")
+    by_label = {c.label: c for c in budget.contributions}
+
+    # DAC noise is defined at the DAC output; between there and the plane sit
+    # the LNA and the out cable.
+    expected = float(chain.gain_between("LNA", "OutCable", 1.5e9))
+    assert float(by_label["AD9082_DAC"].referral_gain_db) == pytest.approx(
+        expected, rel=1e-9)
+
+
+def test_referring_to_input_and_output_differ_by_the_component_gain():
+    """This is why `at` is required rather than implicit."""
+    chain = _digitizer_chain()
+    lna_gain = float(chain.components[0].gain(1.5e9))
+
+    at_input = chain.noise_at_point("LNA", 1.5e9, 1e3, at="input")
+    at_output = chain.noise_at_point("LNA", 1.5e9, 1e3, at="output")
+    assert float(at_output) / float(at_input) == pytest.approx(
+        10 ** (lna_gain / 10), rel=1e-9)
+
+
+def test_at_is_required_and_validated():
+    chain = _digitizer_chain()
+    with pytest.raises(TypeError):
+        chain.noise_at_point("LNA", 1.5e9, 1e3)
+    with pytest.raises(ValueError, match="must be 'input' or 'output'"):
+        chain.noise_at_point("LNA", 1.5e9, 1e3, at="middle")
+
+
+def test_budget_reports_power_and_temperature():
+    """Totals and per-source contributions are available in W/Hz and K."""
+    from utils import kb
+
+    chain = _digitizer_chain()
+    budget = chain.noise_budget("LNA", 1.5e9, 1e3, at="input")
+
+    assert float(budget.total_k) == pytest.approx(
+        float(budget.total_w) / kb, rel=1e-12)
+    for c in budget.contributions:
+        assert float(c.temperature_k) == pytest.approx(
+            float(c.power_w) / kb, rel=1e-12)
+        assert float(c.intrinsic_k) == pytest.approx(
+            float(c.intrinsic_w) / kb, rel=1e-12)
+
+
+def test_budget_contributions_sum_to_the_total_and_are_ranked():
+    chain = _digitizer_chain()
+    budget = chain.noise_budget("LNA", 1.5e9, 1e3, at="input")
+
+    assert sum(float(c.power_w) for c in budget.contributions) == pytest.approx(
+        float(budget.total_w), rel=1e-12)
+    powers = [float(c.power_w) for c in budget.contributions]
+    assert powers == sorted(powers, reverse=True)
+    assert budget.dominant() is budget.contributions[0]
+    assert sum(float(budget.fraction(c)) for c in budget.contributions) == \
+        pytest.approx(1.0, rel=1e-12)
+
+
+def test_budget_table_and_rows_render():
+    chain = _digitizer_chain()
+    budget = chain.noise_budget("LNA", 1.5e9, 1e3, at="input")
+
+    text = budget.table()
+    assert "referred to LNA (input)" in text
+    assert "TOTAL" in text
+    assert "AD9082_ADC" in text
+
+    rows = budget.to_rows()
+    assert len(rows) == len(budget.contributions)
+    assert {"source", "intrinsic_K", "referral_gain_dB",
+            "contribution_K", "fraction_of_total"} <= set(rows[0])
+
+
+def test_budget_table_rejects_a_frequency_sweep():
+    chain = _digitizer_chain()
+    budget = chain.noise_budget("LNA", 1.5e9, np.logspace(0, 4, 5), at="input")
+    with pytest.raises(ValueError, match="scalar frequencies"):
+        budget.table()
+    # to_rows still works, carrying arrays through.
+    assert len(budget.to_rows()) == len(budget.contributions)
+
+
+def test_converters_can_be_referenced_by_name():
+    chain = _digitizer_chain()
+    at_dac = chain.noise_budget("AD9082_DAC", 1.5e9, 1e3, at="output")
+    assert at_dac.reference == "AD9082_DAC (output)"
+    # Referred to the DAC output, DAC noise needs no referral at all.
+    dac_term = next(c for c in at_dac.contributions if c.label == "AD9082_DAC")
+    assert float(dac_term.referral_gain_db) == pytest.approx(0.0)
+    assert float(dac_term.power_w) == pytest.approx(float(dac_term.intrinsic_w))
+
+
+def test_component_labels_take_precedence_over_converter_names():
+    chain = SignalChain(name="collide")
     chain.add_component(
         registry.create("attenuator", {"attenuation": -10, "temperature": 300}),
-        label="A")
-    chain.add_component(registry.create("amplifier.asu_3ghz_lna", {}), label="LNA")
-    dac = registry.create("converter.ad9082_dac", {"carrier_power_dbm": -20.0})
-    adc = registry.create("converter.ad9082_adc", {})
-    chain.set_digitizer(dac, adc)
+        label="AD9082_DAC")
+    chain.set_digitizer(
+        registry.create("converter.ad9082_dac", {"carrier_power_dbm": -20.0}),
+        None)
+    plane, description = chain.resolve_plane("AD9082_DAC", "input")
+    # Resolves to the component (stage 1, after the DAC), not the DAC itself.
+    assert plane == 1
+    assert description == "AD9082_DAC (input)"
 
-    total, parts = chain.output_noise(1.5e9, 1e3, contributions=True)
-    components_only = total - parts[dac.name] - parts[adc.name]
 
-    assert chain.noise_at_point("LNA", 1.5e9, 1e3) == pytest.approx(
-        components_only, rel=1e-9)
-    # And the omitted DAC term is not negligible - here it dominates.
-    assert parts[dac.name] > 10 * components_only
+def test_unknown_reference_point_is_reported():
+    chain = _digitizer_chain()
+    with pytest.raises(KeyError, match="cannot resolve reference point"):
+        chain.noise_budget("NoSuchThing", 1.5e9, 1e3, at="input")
 
 
 def test_noise_reference_is_declared_per_component():

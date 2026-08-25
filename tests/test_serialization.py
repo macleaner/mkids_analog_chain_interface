@@ -124,8 +124,8 @@ def test_labels_survive_so_analysis_can_reference_a_point(tmp_path, sample_chain
     path = tmp_path / "chain.json"
     sample_chain.save(str(path))
     loaded = SignalChain.load(str(path))
-    before = sample_chain.noise_at_point("LNA", 1.5e9, 1e3)
-    after = loaded.noise_at_point("LNA", 1.5e9, 1e3)
+    before = sample_chain.noise_at_point("LNA", 1.5e9, 1e3, at="output")
+    after = loaded.noise_at_point("LNA", 1.5e9, 1e3, at="output")
     assert _same(before, after)
 
 

@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 import registry
+from noise_budget import NoiseBudget, NoiseContribution, _magnitude
 from utils import to_dbm, to_W
 
 #: Bumped when the on-disk layout changes in a way that needs migration.
@@ -47,20 +48,6 @@ def _has_any_noise(noise_power):
         return False
     arr = np.asarray(noise_power, dtype=float)
     return bool(np.any(arr > 0))
-
-
-def _noise_origin_index(component, idx):
-    """
-    First component index that acts on this component's noise.
-
-    Input-referred noise (an amplifier's noise temperature) is amplified by the
-    component's own gain, so propagation starts at the component itself.
-    Output-referred noise (an attenuator's Johnson noise, DAC phase noise) is
-    already at the component's output, so propagation starts downstream of it.
-    """
-    if getattr(component, "noise_reference", "input") == "output":
-        return idx + 1
-    return idx
 
 
 class SignalChain:
@@ -230,56 +217,197 @@ class SignalChain:
         
         return total_gain_db
     
-    def noise_at_point(self, reference_point, carrier_frequency, spectral_frequency, contributions=False):
+    # ------------------------------------------------------------------
+    # Stage / plane model
+    # ------------------------------------------------------------------
+
+    def stages(self):
         """
-        Calculate total noise at a reference point from all upstream sources.
-        
-        Each component's noise contribution is propagated through all
-        downstream components to the reference point.
-        
+        The full signal path as ``(label, component, kind)`` triples.
+
+        Ordered DAC, chain components, ADC. Planes are numbered 0..len(stages):
+        plane *k* is immediately before stage *k*, and the final plane is the
+        chain output. Component integer indices and labels keep addressing
+        ``self.components`` as they always have; the DAC offset is applied
+        internally so existing callers and saved labels are unaffected.
+        """
+        result = []
+        if self.dac is not None:
+            result.append((self.dac.name, self.dac, "dac"))
+        for idx, component in enumerate(self.components):
+            result.append((self._get_label_for_index(idx), component,
+                           getattr(component, "component_type", "generic")))
+        if self.adc is not None:
+            result.append((self.adc.name, self.adc, "adc"))
+        return result
+
+    def _stage_offset(self):
+        """Stage index of ``components[0]``: 1 if a DAC is present, else 0."""
+        return 1 if self.dac is not None else 0
+
+    def _cumulative_gain(self, plane, carrier_frequency, stages=None):
+        """
+        Total gain from the chain input up to ``plane``.
+
+        Plane 0 is the chain input, so its cumulative gain is zero.
+        """
+        stages = stages if stages is not None else self.stages()
+        total = 0.0
+        for _, component, _ in stages[:plane]:
+            total = total + component.gain(carrier_frequency)
+        return total
+
+    def _source_plane(self, stage_index, component):
+        """
+        The plane at which a stage's own noise is defined.
+
+        Input-referred noise sits at the stage's input plane, output-referred
+        noise at its output plane. See ``Component.noise_reference``.
+        """
+        if getattr(component, "noise_reference", "input") == "output":
+            return stage_index + 1
+        return stage_index
+
+    def resolve_plane(self, reference_point, at):
+        """
+        Resolve a reference point to a plane index and a readable description.
+
         Parameters
         ----------
         reference_point : int or str
-            The point in the chain to calculate noise at
+            A component index, a component label, or the name of the DAC/ADC.
+            Component labels take precedence over converter names.
+        at : {'input', 'output'}
+            Which side of the named component the plane sits on. Required -
+            input and output differ by that component's gain, which for an
+            amplifier is tens of dB, so it must not be implicit.
+        """
+        if at not in ("input", "output"):
+            raise ValueError(
+                f"at must be 'input' or 'output', got {at!r}")
+
+        stages = self.stages()
+        stage_index = None
+
+        # Components first, so a user label always wins over a converter name.
+        try:
+            stage_index = self.get_index(reference_point) + self._stage_offset()
+        except (IndexError, KeyError, TypeError):
+            if isinstance(reference_point, str):
+                for idx, (label, _, kind) in enumerate(stages):
+                    if kind in ("dac", "adc") and label == reference_point:
+                        stage_index = idx
+                        break
+        if stage_index is None:
+            raise KeyError(
+                f"cannot resolve reference point {reference_point!r}. "
+                f"Known labels: {sorted(self.labels)}"
+            )
+
+        label = stages[stage_index][0]
+        plane = stage_index if at == "input" else stage_index + 1
+        return plane, f"{label} ({at})"
+
+    def noise_budget(self, reference_point, carrier_frequency,
+                     spectral_frequency, *, at):
+        """
+        Every noise source in the system referred to one reference plane.
+
+        Sources upstream of the plane are referred forward and sources
+        downstream referred backward, both via
+
+            contribution_dBm = intrinsic_dBm + C(plane) - C(source_plane)
+
+        so a downstream source is divided by the gain between the plane and
+        itself. That is why the referred total is not a measurable power at the
+        plane: an ADC behind an attenuator can dominate the budget at the input
+        of an LNA.
+
+        Parameters
+        ----------
+        reference_point : int or str
+            Component index, component label, or DAC/ADC name.
         carrier_frequency : float or np.ndarray
-            Carrier frequency in Hz (used for gain calculations and frequency-dependent noise)
+            Carrier frequency in Hz, used for all gain evaluation.
         spectral_frequency : float or np.ndarray
-            Spectral/offset frequency in Hz (used for noise spectral shape, e.g., 1/f noise)
-        contributions : bool, optional
-            If True, return a dict with individual component contributions
-            
+            Offset frequency in Hz, used for each source's noise spectrum.
+        at : {'input', 'output'}
+            Which plane of the named component to refer to.
+
         Returns
         -------
-        float or np.ndarray
-            Total noise power spectral density in W/Hz
-        dict (if contributions=True)
-            Dictionary mapping component labels to their noise contributions
+        NoiseBudget
+            Contributions ordered largest first, each with its intrinsic noise,
+            the referral gain applied, and the result in W/Hz and K.
         """
-        ref_idx = self.get_index(reference_point)
+        plane, description = self.resolve_plane(reference_point, at)
+        return self._build_budget(plane, description, carrier_frequency,
+                                  spectral_frequency)
 
-        total_noise_W = 0.0
-        noise_dict = {}
+    def output_budget(self, carrier_frequency, spectral_frequency):
+        """Noise budget referred to the chain output, after the ADC."""
+        stages = self.stages()
+        return self._build_budget(len(stages), "chain output",
+                                  carrier_frequency, spectral_frequency,
+                                  stages=stages)
 
-        # Every component up to and including the reference point.
-        for idx in range(ref_idx + 1):
-            component = self.components[idx]
-            noise_power = _evaluate_noise(component, spectral_frequency)
-            if not _has_any_noise(noise_power):
+    def _build_budget(self, plane, description, carrier_frequency,
+                      spectral_frequency, stages=None):
+        """Refer every stage's noise to ``plane``."""
+        stages = stages if stages is not None else self.stages()
+        reference_gain = self._cumulative_gain(plane, carrier_frequency, stages)
+
+        contributions = []
+        for stage_index, (label, component, kind) in enumerate(stages):
+            intrinsic = _evaluate_noise(component, spectral_frequency)
+            if not _has_any_noise(intrinsic):
                 continue
 
-            gain_db = self._gain_acting_on_noise(
-                component, idx, ref_idx, carrier_frequency)
+            source_plane = self._source_plane(stage_index, component)
+            source_gain = self._cumulative_gain(
+                source_plane, carrier_frequency, stages)
+            referral_gain = reference_gain - source_gain
 
-            # N_out_dBm = N_in_dBm + G_dB
-            noise_at_ref_W = to_W(to_dbm(noise_power) + gain_db)
-            total_noise_W = total_noise_W + noise_at_ref_W
+            contributions.append(NoiseContribution(
+                label=label,
+                kind=kind,
+                noise_reference=getattr(component, "noise_reference", "input"),
+                intrinsic_w=intrinsic,
+                referral_gain_db=referral_gain,
+                power_w=to_W(to_dbm(intrinsic) + referral_gain),
+            ))
 
-            if contributions:
-                noise_dict[self._get_label_for_index(idx)] = noise_at_ref_W
+        contributions.sort(key=lambda c: _magnitude(c.power_w), reverse=True)
+        return NoiseBudget(
+            reference=description,
+            carrier_hz=carrier_frequency,
+            spectral_hz=spectral_frequency,
+            contributions=contributions,
+        )
 
+    def noise_at_point(self, reference_point, carrier_frequency,
+                       spectral_frequency, contributions=False, *, at):
+        """
+        Total noise referred to a plane, in W/Hz.
+
+        A thin accessor over :meth:`noise_budget`; use that directly for the
+        per-source breakdown with temperatures and referral gains.
+
+        Parameters
+        ----------
+        reference_point : int or str
+            Component index, component label, or DAC/ADC name.
+        carrier_frequency, spectral_frequency : float or np.ndarray
+        contributions : bool, optional
+            If True, also return a ``{label: W/Hz}`` dict.
+        at : {'input', 'output'}
+            Required; see :meth:`resolve_plane`.
+        """
+        budget = self.noise_budget(reference_point, carrier_frequency,
+                                   spectral_frequency, at=at)
         if contributions:
-            return total_noise_W, noise_dict
-        return total_noise_W
+            return budget.total_w, budget.as_dict()
+        return budget.total_w
 
 
     def _get_label_for_index(self, idx):
@@ -288,19 +416,6 @@ class SignalChain:
             if label_idx == idx:
                 return label
         return f"Component_{idx}"
-
-    def _gain_acting_on_noise(self, component, idx, ref_idx, carrier_frequency):
-        """
-        Total gain applied to a component's noise on its way to ``ref_idx``.
-
-        Whether the component's own gain is included depends on its
-        ``noise_reference``; see ``_noise_origin_index``.
-        """
-        start = _noise_origin_index(component, idx)
-        if start > ref_idx:
-            # Nothing downstream acts on it - it is already at the reference.
-            return 0.0
-        return self.gain_between(start, ref_idx, carrier_frequency)
 
     # ------------------------------------------------------------------
     # Serialization
@@ -493,63 +608,10 @@ class SignalChain:
         dict (if contributions=True)
             Dictionary mapping component labels to their noise contributions
         """
-        total_noise_W = 0.0
-        noise_dict = {}
-        n_components = len(self.components)
-
-        # Gain seen by noise originating downstream of the component chain.
-        adc_gain = (self.adc.gain(carrier_frequency)
-                    if self.adc is not None else 0.0)
-
-        # DAC noise: propagates through every component, then the ADC.
-        if self.dac is not None:
-            dac_noise = _evaluate_noise(self.dac, spectral_frequency)
-            if _has_any_noise(dac_noise):
-                gain_to_output = adc_gain
-                if n_components > 0:
-                    gain_to_output = gain_to_output + self.gain_between(
-                        0, n_components - 1, carrier_frequency)
-                # Phase noise is output-referred, so the DAC's own gain is not
-                # applied to it; an input-referred converter would need it.
-                if getattr(self.dac, "noise_reference", "input") == "input":
-                    gain_to_output = gain_to_output + self.dac.gain(carrier_frequency)
-                contribution = to_W(to_dbm(dac_noise) + gain_to_output)
-                total_noise_W = total_noise_W + contribution
-                if contributions:
-                    noise_dict[self.dac.name] = contribution
-
-        # Chain components. Uses the same propagation rule as noise_at_point,
-        # so the two methods agree by construction.
-        for idx in range(n_components):
-            component = self.components[idx]
-            noise_power = _evaluate_noise(component, spectral_frequency)
-            if not _has_any_noise(noise_power):
-                continue
-
-            gain_to_output = adc_gain + self._gain_acting_on_noise(
-                component, idx, n_components - 1, carrier_frequency)
-
-            contribution = to_W(to_dbm(noise_power) + gain_to_output)
-            total_noise_W = total_noise_W + contribution
-            if contributions:
-                noise_dict[self._get_label_for_index(idx)] = contribution
-
-        # ADC noise is at the end of the chain, so nothing downstream acts on it
-        # unless it is input-referred, in which case its own gain applies.
-        if self.adc is not None:
-            adc_noise = _evaluate_noise(self.adc, spectral_frequency)
-            if _has_any_noise(adc_noise):
-                if getattr(self.adc, "noise_reference", "input") == "input":
-                    contribution = to_W(to_dbm(adc_noise) + adc_gain)
-                else:
-                    contribution = adc_noise
-                total_noise_W = total_noise_W + contribution
-                if contributions:
-                    noise_dict[self.adc.name] = contribution
-
+        budget = self.output_budget(carrier_frequency, spectral_frequency)
         if contributions:
-            return total_noise_W, noise_dict
-        return total_noise_W
+            return budget.total_w, budget.as_dict()
+        return budget.total_w
 
 
     def summary(self):

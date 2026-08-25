@@ -79,25 +79,28 @@ def main():
     # Spectral frequency: the offset frequency for noise spectrum (e.g., 1 kHz for phase noise)
     spectral_freq = 1e3  # 1 kHz offset for noise analysis
     
-    noise_at_detector = chain.noise_at_point("ColdAtten", freq, spectral_freq)
-    print(f"Noise at detector (cold attenuator) at {spectral_freq/1e3:.1f} kHz offset: {noise_at_detector:.2e} W/Hz")
-    
-    noise_at_lna = chain.noise_at_point("LNA", freq, spectral_freq)
-    print(f"Noise at LNA output at {spectral_freq/1e3:.1f} kHz offset: {noise_at_lna:.2e} W/Hz")
-    
+    # A reference plane is a component plus which side of it, because the two
+    # differ by that component's gain. Every noise source in the system is
+    # referred to that plane - sources downstream are referred backward.
+    noise_at_detector = chain.noise_at_point("ColdAtten", freq, spectral_freq,
+                                             at="input")
+    print(f"Noise referred to detector (cold attenuator input) at "
+          f"{spectral_freq/1e3:.1f} kHz offset: {noise_at_detector:.2e} W/Hz")
+
+    noise_at_lna = chain.noise_at_point("LNA", freq, spectral_freq, at="input")
+    print(f"Noise referred to LNA input at {spectral_freq/1e3:.1f} kHz offset: "
+          f"{noise_at_lna:.2e} W/Hz")
+
     noise_at_output = chain.output_noise(freq, spectral_freq)
     print(f"Noise at system output at {spectral_freq/1e3:.1f} kHz offset: {noise_at_output:.2e} W/Hz")
-    
-    # Show individual noise contributions at output
-    print("\n--- Noise Contributors at Output ---")
-    total_noise, contributions = chain.noise_at_point("WarmAmp2", freq, spectral_freq, contributions=True)
-    
-    # Sort by contribution magnitude
-    sorted_contrib = sorted(contributions.items(), key=lambda x: x[1], reverse=True)
-    
-    for label, noise_power in sorted_contrib:
-        percentage = 100 * noise_power / total_noise
-        print(f"  {label:20s}: {noise_power:.2e} W/Hz ({percentage:.1f}%)")
+
+    # A full budget shows each source's own noise, the gain applied to refer it
+    # to the plane, and the result in both power and temperature.
+    print("\n--- Noise Budget at the LNA Input ---")
+    print(chain.noise_budget("LNA", freq, spectral_freq, at="input").table())
+
+    print("\n--- Noise Budget at the System Output ---")
+    print(chain.output_budget(freq, spectral_freq).table())
     
     # Frequency sweep
     print(f"\n{'=' * 70}")

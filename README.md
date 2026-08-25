@@ -230,13 +230,64 @@ output**, whatever the attenuation. A 30 dB attenuator at 300 K does not
 attenuate its own thermal noise, so a lone attenuator contributes exactly
 `k_B × T` at the chain output.
 
-`noise_at_point()` and `output_noise()` share one propagation rule, so they
-agree at the end of the chain.
+#### Referring noise to a plane
 
-> **Known gap:** `noise_at_point()` iterates only the chain components and
-> ignores the DAC/ADC, so it omits upstream DAC phase noise - which often
-> dominates the budget. Use `output_noise()` for a complete figure until this is
-> addressed.
+"Noise at a point" means **every noise source in the system referred to that
+plane**, not just what physically arrives there. Sources upstream are referred
+forward, sources downstream referred backward, both via
+
+```
+contribution_dBm = intrinsic_dBm + C(reference_plane) − C(source_plane)
+```
+
+where `C` is the cumulative gain from the chain input to a plane. The DAC and
+ADC take part like any other stage.
+
+A reference plane is a component **plus which side of it** - `at` is required,
+because input and output differ by that component's gain, which for an
+amplifier is tens of dB:
+
+```python
+budget = chain.noise_budget("LNA", carrier_hz, offset_hz, at="input")
+print(budget.table())
+print(budget.total_w, budget.total_k)      # W/Hz and equivalent K
+for c in budget.contributions:             # ranked, largest first
+    print(c.label, c.intrinsic_k, c.referral_gain_db, c.temperature_k)
+
+chain.output_budget(carrier_hz, offset_hz) # referred to the chain output
+chain.noise_at_point("LNA", carrier_hz, offset_hz, at="input")  # total only
+```
+
+Which produces, for a chain with too little gain ahead of the digitizer:
+
+```
+Noise referred to LNA (input)   carrier 1.5 GHz, offset 1000 Hz
+source             own noise      own T  referral    referred        T_eq   share
+                      [W/Hz]        [K]      [dB]      [W/Hz]         [K]     [%]
+---------------------------------------------------------------------------------
+AD9082_ADC         1.000e-17  724637.68     -9.09   1.233e-18    89355.42   99.34
+Attenuator_0       4.140e-21     300.00     +0.00   4.140e-21      300.00    0.33
+AD9082_DAC         3.159e-19   22891.85    -20.00   3.159e-21      228.92    0.25
+```
+
+The `referral` column is the diagnostic: with only 9 dB of net gain before the
+ADC, ADC noise referred back to the LNA input is ~89,000 K and swamps
+everything. The same budget at the chain output shows the ADC as merely one term
+among several - which is why the reference plane has to be explicit.
+
+The referred total is **not** a power you could measure at that plane; it is the
+equivalent noise there, which is what an SNR or system noise temperature at that
+plane is built from.
+
+The GUI exposes this as the **Noise Budget** tab, with CSV export that carries
+the reference plane, frequencies and referral gains in the header.
+
+> **Known issue:** every source's `noise()` is evaluated at the *offset*
+> frequency. That is right for DAC phase noise but wrong for an amplifier, whose
+> noise temperature is a function of RF frequency - the ASU LNA reports 30 K
+> (its value near DC) instead of 6 K at a 1.5 GHz carrier. Amplifier
+> contributions are therefore overstated. Fixing it needs a per-component
+> declaration of which frequency its noise depends on.
 
 ### Gain Calculation
 

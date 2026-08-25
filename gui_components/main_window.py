@@ -20,6 +20,7 @@ from .parameter_panel import ParameterPanel
 from .diagram_panel import DiagramPanel
 from .results_panel import ResultsPanel
 from .digitizer_panel import DigitizerPanel
+from .budget_panel import BudgetPanel
 
 
 class MainWindow(QMainWindow):
@@ -91,6 +92,10 @@ class MainWindow(QMainWindow):
         # Results tab (gain + noise)
         self.results_panel = ResultsPanel()
         self.results_tabs.addTab(self.results_panel, "Analysis Results")
+
+        # Noise budget: every source referred to one reference plane
+        self.budget_panel = BudgetPanel()
+        self.results_tabs.addTab(self.budget_panel, "Noise Budget")
         
         main_splitter.addWidget(self.results_tabs)
         
@@ -294,6 +299,10 @@ class MainWindow(QMainWindow):
         # Update results panel and switch to results tab
         self.results_panel.set_chain(chain)
         self.results_panel.calculate_and_plot()
+
+        # Keep the budget panel's reference-point list in step with the chain.
+        self.budget_panel.set_chain(chain)
+
         self.results_tabs.setCurrentIndex(1)  # Switch to results tab
     
     def _show_about(self):

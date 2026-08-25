@@ -10,6 +10,7 @@ from .chain_view import ChainView
 from .diagram_panel import DiagramPanel
 from .results_panel import ResultsPanel
 from .digitizer_panel import DigitizerPanel
+from .budget_panel import BudgetPanel
 from .main_window import MainWindow
 
 __all__ = [
