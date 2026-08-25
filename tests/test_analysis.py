@@ -351,8 +351,9 @@ def test_table_defaults_to_dbm_per_hz_and_can_switch():
     assert "[W/Hz]" in watts
     assert "[dBm/Hz]" not in watts
 
-    # Temperatures are unit-independent and appear either way.
-    assert "[K]" in default and "[K]" in watts
+    # No equivalent noise temperature is displayed - it is meaningless for a
+    # DAC or ADC and reads as a bug at millions of kelvin.
+    assert "[K]" not in default and "[K]" not in watts
 
     with pytest.raises(ValueError, match="unit must be one of"):
         budget.table("dBc/Hz")

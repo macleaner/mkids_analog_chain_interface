@@ -303,46 +303,61 @@ because input and output differ by that component's gain, which for an
 amplifier is tens of dB:
 
 ```python
-budget = chain.noise_budget("LNA", carrier_hz, offset_hz, at="input")
-print(budget.table())
-print(budget.total_w, budget.total_k)      # W/Hz and equivalent K
-for c in budget.contributions:             # ranked, largest first
-    print(c.label, c.intrinsic_k, c.referral_gain_db, c.temperature_k)
+budget = chain.noise_budget("LNA", carrier_hz, spectral_hz, at="input")
+print(budget.table())                        # dBm/Hz by default
+print(budget.table("W/Hz"))                  # or watts
+print(budget.total_w, budget.total_dbm_per_hz)
+for c in budget.contributions:               # ranked, largest first
+    print(c.label, c.intrinsic_dbm_per_hz, c.referral_gain_db, c.power_dbm_per_hz)
 
-chain.output_budget(carrier_hz, offset_hz) # referred to the chain output
-chain.noise_at_point("LNA", carrier_hz, offset_hz, at="input")  # total only
+chain.output_budget(carrier_hz, spectral_hz)   # referred to the chain output
+chain.noise_at_point("LNA", carrier_hz, spectral_hz, at="input")  # total only
 ```
 
 Which produces, for a chain with too little gain ahead of the digitizer:
 
 ```
-Noise referred to LNA (input)   carrier 1.5 GHz, offset 1000 Hz
-source             own noise      own T  referral    referred        T_eq   share
-                      [W/Hz]        [K]      [dB]      [W/Hz]         [K]     [%]
----------------------------------------------------------------------------------
-AD9082_ADC         1.000e-17  724637.68     -9.09   1.233e-18    89355.42   99.34
-Attenuator_0       4.140e-21     300.00     +0.00   4.140e-21      300.00    0.33
-AD9082_DAC         3.159e-19   22891.85    -20.00   3.159e-21      228.92    0.25
+Noise referred to LNA (input)   carrier 1.5 GHz, spectral 1000 Hz
+==============================================================
+source               own noise   referral    referred    share
+                      [dBm/Hz]       [dB]    [dBm/Hz]      [%]
+--------------------------------------------------------------
+AD9082_ADC             -148.77      -9.09     -157.86    95.40
+Attenuator_0           -173.83      +0.00     -173.83     2.41
+AD9082_DAC             -155.00     -20.00     -175.00     1.84
+PreAdcAtten            -173.83      -9.09     -182.92     0.30
+LNA                    -190.82      +0.00     -190.82     0.05
+--------------------------------------------------------------
+TOTAL                                         -157.66   100.00
 ```
 
-The `referral` column is the diagnostic: with only 9 dB of net gain before the
-ADC, ADC noise referred back to the LNA input is ~89,000 K and swamps
-everything. The same budget at the chain output shows the ADC as merely one term
-among several - which is why the reference plane has to be explicit.
+The `referral` column is the diagnostic. With only 9 dB of net gain before the
+ADC, ADC noise referred back to the LNA input dominates at 95%. Referred to the
+chain output instead, the same ADC term needs no referral at all and the ordering
+changes - which is why the reference plane has to be explicit.
 
 The referred total is **not** a power you could measure at that plane; it is the
 equivalent noise there, which is what an SNR or system noise temperature at that
 plane is built from.
 
-The GUI exposes this as the **Noise Budget** tab, with CSV export that carries
-the reference plane, frequencies and referral gains in the header.
+The GUI exposes this as the **Noise Budget** tab, with a units selector and CSV
+export that carries the reference plane, frequencies and referral gains in the
+header.
 
-> **Known issue:** every source's `noise()` is evaluated at the *offset*
-> frequency. That is right for DAC phase noise but wrong for an amplifier, whose
-> noise temperature is a function of RF frequency - the ASU LNA reports 30 K
-> (its value near DC) instead of 6 K at a 1.5 GHz carrier. Amplifier
-> contributions are therefore overstated. Fixing it needs a per-component
-> declaration of which frequency its noise depends on.
+#### Why no noise-temperature column
+
+The table deliberately shows no equivalent noise temperature. Dividing a PSD by
+`k_B` gives a physically meaningful temperature for a thermal source or an
+amplifier's input noise, but for DAC phase noise or an ADC floor it is only "the
+temperature a matched resistor would need to be to emit this" - which lands at
+millions of kelvin and reads as a bug. For the DAC it is worse: its phase noise
+scales with carrier power, so its "temperature" moves when you change the
+carrier level, which no real temperature does.
+
+The conversion is still available explicitly - `budget.total_k`,
+`contribution.temperature_k`, `contribution.intrinsic_k`, and the `*_K` columns
+in `to_rows()`/CSV - for callers who want it on a source where it means
+something.
 
 ### Gain Calculation
 

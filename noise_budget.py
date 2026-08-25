@@ -177,10 +177,19 @@ class NoiseBudget:
         Parameters
         ----------
         unit : {'dBm/Hz', 'W/Hz'}
-            Unit for the power columns. Temperatures are always shown in K,
-            being independent of the power unit.
+            Unit for the power columns.
 
         Requires scalar frequencies; for a sweep, build a budget per frequency.
+
+        Notes
+        -----
+        Deliberately shows no equivalent noise temperature. Dividing a PSD by
+        k_B is only a physically meaningful temperature for a thermal source or
+        an amplifier's input noise; for DAC phase noise or an ADC floor it is
+        just "the temperature a matched resistor would need to be", which reads
+        as a bug at millions of kelvin - and for the DAC it moves with the
+        carrier power, which no real temperature does. The ``*_k`` properties
+        remain for callers who want the conversion explicitly.
         """
         if unit not in POWER_UNITS:
             raise ValueError(f"unit must be one of {POWER_UNITS}, got {unit!r}")
@@ -201,30 +210,27 @@ class NoiseBudget:
         header = (f"Noise referred to {self.reference}   "
                   f"carrier {float(self.carrier_hz)/1e9:g} GHz, "
                   f"spectral {float(self.spectral_hz):g} Hz")
-        columns = (f"{'source':<16}{'own noise':>{width}}{'own T':>11}"
-                   f"{'referral':>10}{'referred':>{width}}{'T_eq':>12}{'share':>8}")
-        units_row = (f"{'':<16}{'[' + unit + ']':>{width}}{'[K]':>11}"
-                     f"{'[dB]':>10}{'[' + unit + ']':>{width}}{'[K]':>12}{'[%]':>8}")
+        columns = (f"{'source':<18}{'own noise':>{width}}"
+                   f"{'referral':>11}{'referred':>{width}}{'share':>9}")
+        units_row = (f"{'':<18}{'[' + unit + ']':>{width}}"
+                     f"{'[dB]':>11}{'[' + unit + ']':>{width}}{'[%]':>9}")
         lines = [header, "=" * len(columns), columns, units_row,
                  "-" * len(columns)]
 
         for c in self.contributions:
             lines.append(
-                f"{c.label[:15]:<16}"
+                f"{c.label[:17]:<18}"
                 f"{float(in_unit(c.intrinsic_w, unit)):{fmt}}"
-                f"{float(c.intrinsic_k):>11.2f}"
-                f"{float(c.referral_gain_db):>+10.2f}"
+                f"{float(c.referral_gain_db):>+11.2f}"
                 f"{float(in_unit(c.power_w, unit)):{fmt}}"
-                f"{float(c.temperature_k):>12.2f}"
-                f"{100 * float(self.fraction(c)):>8.2f}"
+                f"{100 * float(self.fraction(c)):>9.2f}"
             )
 
         lines.append("-" * len(columns))
         lines.append(
-            f"{'TOTAL':<16}{'':>{width}}{'':>11}{'':>10}"
+            f"{'TOTAL':<18}{'':>{width}}{'':>11}"
             f"{float(in_unit(self.total_w, unit)):{fmt}}"
-            f"{float(self.total_k):>12.2f}"
-            f"{100.0:>8.2f}"
+            f"{100.0:>9.2f}"
         )
         return "\n".join(lines)
 

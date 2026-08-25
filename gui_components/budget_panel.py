@@ -184,8 +184,7 @@ class BudgetPanel(QWidget):
         else:
             total_text = f"{float(self.budget.total_w):.3e} W/Hz"
         self.summary_label.setText(
-            f"Total {total_text} "
-            f"({float(self.budget.total_k):.1f} K equivalent).\n\n"
+            f"Total {total_text}.\n\n"
             f"Dominated by {dominant.label} at "
             f"{100 * float(self.budget.fraction(dominant)):.1f}%."
         )
