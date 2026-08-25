@@ -81,14 +81,14 @@ class ResultsPanel(QWidget):
         self.start_spectral_spin.setValue(10.0)
         self.start_spectral_spin.setSuffix(" Hz")
         self.start_spectral_spin.setDecimals(3)
-        param_layout.addRow("  Start Offset:", self.start_spectral_spin)
+        param_layout.addRow("  Start Spectral Freq:", self.start_spectral_spin)
         
         self.stop_spectral_spin = QDoubleSpinBox()
         self.stop_spectral_spin.setRange(0.001, 1e9)
         self.stop_spectral_spin.setValue(100000.0)
         self.stop_spectral_spin.setSuffix(" Hz")
         self.stop_spectral_spin.setDecimals(3)
-        param_layout.addRow("  Stop Offset:", self.stop_spectral_spin)
+        param_layout.addRow("  Stop Spectral Freq:", self.stop_spectral_spin)
         
         # Common Parameters
         common_label = QLabel("<b>Common:</b>")
@@ -185,7 +185,7 @@ class ResultsPanel(QWidget):
                 return
             if start_spectral >= stop_spectral:
                 QMessageBox.warning(self, "Invalid Range", 
-                                  "Noise start offset must be less than stop offset.")
+                                  "Noise start spectral frequency must be less than stop.")
                 return
             
             # Calculate gain data

@@ -205,6 +205,40 @@ change results. If you change a model deliberately, regenerate it with
 
 ## Key Concepts
 
+### The two frequencies
+
+Every analysis method takes two frequencies, and they mean different things:
+
+| Name | What it is | Typical scale | Used for |
+|---|---|---|---|
+| **carrier frequency** | The real-world frequency of the tone probing the system | MHz - GHz | All gain evaluation; noise quantities that vary across the RF band |
+| **spectral frequency** (audio frequency) | The offset *from the carrier* at which a noise quantity is evaluated | Hz - MHz | Noise that has structure near the carrier, e.g. DAC phase noise |
+
+`gain(carrier_frequency)` is always a function of the carrier frequency alone.
+
+For noise, which one matters depends on the source:
+
+- **DAC phase noise** is a strong function of spectral frequency (it is a 1/f
+  skirt around the carrier) and scales with carrier power.
+- **An amplifier's noise temperature** depends on carrier frequency and is
+  essentially white in spectral frequency near the carrier.
+- **Attenuator Johnson noise** and the **ADC noise floor** depend on neither.
+
+> **Known issue:** `noise()` currently receives only one frequency - the
+> spectral frequency - for every source. That is correct for the DAC and
+> irrelevant for the attenuator and ADC, but wrong for the three amplifier
+> models, whose noise curves are defined over 0-3 GHz of *carrier* frequency.
+> Fed a spectral frequency they return their value near DC:
+>
+> | Model | Reported | Correct at 1.5 GHz | Overstated |
+> |---|---|---|---|
+> | ASU 3 GHz LNA | 30.00 K | 6.00 K | 5.00x |
+> | CryoElec LNA | 5.00 K | 4.00 K | 1.25x |
+> | ZX60-3018G+ | 262.59 K | 238.31 K | 1.10x |
+>
+> Amplifier contributions in a noise budget are therefore overstated. Fixing it
+> means passing both frequencies to `noise()` so each model uses what it needs.
+
 ### Noise Propagation
 
 The tool uses **direct noise power propagation** (not noise figure):

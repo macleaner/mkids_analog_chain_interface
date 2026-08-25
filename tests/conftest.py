@@ -15,8 +15,9 @@ if REPO_ROOT not in sys.path:
 # component's extrapolation behaviour.
 CARRIER_FREQS = [1.0e8, 5.0e8, 1.0e9, 1.5e9, 2.5e9]
 
-# Offset/spectral frequencies for noise, spanning the 1/f region of the DAC.
-OFFSET_FREQS = [1.0e0, 1.0e2, 1.0e3, 1.0e5]
+# Spectral (audio) frequencies - the offset from the carrier at which noise
+# is evaluated. Spans the 1/f region of the DAC phase noise.
+SPECTRAL_FREQS = [1.0e0, 1.0e2, 1.0e3, 1.0e5]
 
 
 @pytest.fixture

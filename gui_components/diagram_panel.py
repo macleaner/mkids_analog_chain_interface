@@ -221,9 +221,9 @@ class DiagramPanel(QWidget):
                         bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
             
             if show_noise:
-                spectral_frequency = 1e3  # 1 kHz offset
+                spectral_frequency = 1e3  # 1 kHz spectral frequency
                 total_noise = self.chain.output_noise(frequency, spectral_frequency)
-                ax.text(5, 0.8, f"Output Noise: {total_noise:.2e} W/Hz @ {frequency/1e9:.3f} GHz (offset: {spectral_frequency/1e3:.1f} kHz)",
+                ax.text(5, 0.8, f"Output Noise: {total_noise:.2e} W/Hz @ {frequency/1e9:.3f} GHz (spectral: {spectral_frequency/1e3:.1f} kHz)",
                         ha='center', va='center', fontsize=9,
                         bbox=dict(boxstyle='round', facecolor='lightcoral', alpha=0.5))
             

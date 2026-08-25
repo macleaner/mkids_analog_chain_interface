@@ -78,14 +78,15 @@ class Component(ABC):
         return dict(self._params)
 
     @abstractmethod
-    def gain(self, frequency):
+    def gain(self, carrier_frequency):
         """
         Return the gain/loss of this component in dB.
 
         Parameters
         ----------
-        frequency : float or np.ndarray
-            Frequency in Hz
+        carrier_frequency : float or np.ndarray
+            Carrier frequency in Hz - the real frequency of the tone probing
+            the system, typically MHz to GHz.
 
         Returns
         -------
@@ -98,6 +99,13 @@ class Component(ABC):
         Return the noise power spectral density of this component in W/Hz.
 
         Not all components contribute noise; the default returns 0.
+
+        .. warning::
+           Which frequency this receives is currently ambiguous - see the
+           note on ``noise_reference`` and the README. The chain passes the
+           *spectral* frequency, which is right for DAC phase noise but wrong
+           for an amplifier noise temperature, which varies with the *carrier*
+           frequency. Tracked as a known issue.
         """
         return 0.0
 

@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import registry  # noqa: E402
 from component import Component  # noqa: E402
-from conftest import CARRIER_FREQS, OFFSET_FREQS  # noqa: E402
+from conftest import CARRIER_FREQS, SPECTRAL_FREQS  # noqa: E402
 from signal_chain import FORMAT_VERSION, SignalChain  # noqa: E402
 
 
@@ -71,7 +71,7 @@ def test_every_registered_component_round_trips(type_id, use_defaults):
 
     for f in CARRIER_FREQS:
         assert _same(original.gain(f), restored.gain(f)), f"gain differs at {f} Hz"
-    for f in OFFSET_FREQS:
+    for f in SPECTRAL_FREQS:
         assert _same(original.noise(f), restored.noise(f)), f"noise differs at {f} Hz"
 
 

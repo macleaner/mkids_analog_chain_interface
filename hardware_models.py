@@ -108,15 +108,15 @@ class AD9082_DAC(DACComponent):
         pnoise_W = 10**(pnoise_dbc_simple / 10) * 1e-3
         self.popt, self.pcov = curve_fit(exponential, f_datasheet, pnoise_W)
 
-    def gain(self, frequency):
+    def gain(self, carrier_frequency):
         """Return DAC gain in dB."""
-        if isinstance(frequency, np.ndarray):
-            return np.full_like(frequency, self.gain_db)
+        if isinstance(carrier_frequency, np.ndarray):
+            return np.full_like(carrier_frequency, self.gain_db)
         return self.gain_db
 
     def noise(self, frequency):
         """
-        Return DAC phase noise PSD in W/Hz at the given offset frequency.
+        Return DAC phase noise PSD in W/Hz at the given spectral frequency.
         """
         noise_dbc = 10 * np.log10(
             1e3 * exponential(frequency, self.popt[0], self.popt[1], self.popt[2]))
@@ -139,10 +139,10 @@ class AD9082_ADC(ADCComponent):
         self.gain_db = gain_db
         self.adc_noise_density_dbm = -140  # Fixed white noise floor
 
-    def gain(self, frequency):
+    def gain(self, carrier_frequency):
         """Return ADC gain in dB."""
-        if isinstance(frequency, np.ndarray):
-            return np.full_like(frequency, self.gain_db)
+        if isinstance(carrier_frequency, np.ndarray):
+            return np.full_like(carrier_frequency, self.gain_db)
         return self.gain_db
 
     def noise(self, frequency=None):
@@ -172,8 +172,8 @@ class CryoElec_LNA(ActiveComponent):
         self.gain_f = interpolate.interp1d(
             self.f_datasheet, self.gain_datasheet, bounds_error=False)
 
-    def gain(self, f):
-        return self.gain_f(f)
+    def gain(self, carrier_frequency):
+        return self.gain_f(carrier_frequency)
 
     def noise(self, f):
         return self.noise_f(f)
@@ -210,9 +210,9 @@ class ZX60_3018Gplus(ActiveComponent):
         self.meas_gain_func = interpolate.interp1d(
             meas_gainf, meas_gain, bounds_error=False)
 
-    def gain(self, f):
+    def gain(self, carrier_frequency):
         # Measured response is preferred over the datasheet fit.
-        return self.meas_gain_func(f)
+        return self.meas_gain_func(carrier_frequency)
 
     def noise(self, f):
         return self.noise_f(f)
@@ -247,16 +247,16 @@ class Attenuator(PassiveComponent):
         """Thermal noise is frequency-independent; frequency accepted for API parity."""
         return kb * self.temperature
 
-    def gain(self, carrier_freq=None):
-        if isinstance(carrier_freq, (float, int)):
+    def gain(self, carrier_frequency=None):
+        if isinstance(carrier_frequency, (float, int)):
             return self.attenuation
-        elif carrier_freq is None:
+        elif carrier_frequency is None:
             return self.attenuation
         else:
-            return self.attenuation * np.ones(len(carrier_freq))
+            return self.attenuation * np.ones(len(carrier_frequency))
 
-    def gain_meas(self, carrier_freq):
-        return self.atten_func(carrier_freq) + self.attenuation
+    def gain_meas(self, carrier_frequency):
+        return self.atten_func(carrier_frequency) + self.attenuation
 
 
 @register("amplifier.asu_3ghz_lna", category="Amplifiers",
@@ -280,8 +280,8 @@ class ASU_3GHz_LNA(ActiveComponent):
         self.gain_f = interpolate.interp1d(
             self.f_datasheet, self.gain_datasheet, bounds_error=False)
 
-    def gain(self, f):
-        return self.gain_f(f)
+    def gain(self, carrier_frequency):
+        return self.gain_f(carrier_frequency)
 
     def noise(self, f):
         return self.noise_f(f)
@@ -300,8 +300,8 @@ class _InterpolatedFilter(PassiveComponent):
             np.asarray(f_datasheet), np.asarray(gain_datasheet),
             bounds_error=False)
 
-    def gain(self, carrier_freq):
-        return self.gain_f(carrier_freq)
+    def gain(self, carrier_frequency):
+        return self.gain_f(carrier_frequency)
 
 
 @register("filter.vhf1320p", category="Filters", label="Mini-Circuits VHF-1320+")
@@ -372,11 +372,11 @@ class _TemperatureSwitchedCable(PassiveComponent):
         self.cold_gain = interpolate.interp1d(
             freqs, coldgain, fill_value=fill, bounds_error=False)
 
-    def gain(self, f):
+    def gain(self, carrier_frequency):
         """Insertion loss in dB, using the warm curve above ``transition_k``."""
         if self.temperature > self.transition_k:
-            return self.warm_gain(f)
-        return self.cold_gain(f)
+            return self.warm_gain(carrier_frequency)
+        return self.cold_gain(carrier_frequency)
 
 
 CABLE_PARAMS = (LENGTH_PARAM, TEMPERATURE_PARAM)
@@ -403,12 +403,12 @@ class SMA_CuNi_cryo(_TemperatureSwitchedCable):
                 '300 or 4 (values are in Kelvin).')
         super().__init__(length_m=length_m, temperature=temperature, name=name)
 
-    def gain(self, f):
+    def gain(self, carrier_frequency):
         # Preserves the original exact-match behaviour rather than a threshold.
         if self.temperature == 300:
-            return self.warm_gain(f)
+            return self.warm_gain(carrier_frequency)
         elif self.temperature == 4:
-            return self.cold_gain(f)
+            return self.cold_gain(carrier_frequency)
 
 
 #################################################
@@ -537,9 +537,9 @@ class _RoomTemperatureCable(PassiveComponent):
             np.asarray(self.db_per_m, dtype=float),
             fill_value=fill, bounds_error=False)
 
-    def gain(self, f):
+    def gain(self, carrier_frequency):
         """Total insertion loss in dB over ``self.length`` metres."""
-        return self.atten_per_m(f) * self.length
+        return self.atten_per_m(carrier_frequency) * self.length
 
 
 @register("cable.sma_generic", category="Cables",

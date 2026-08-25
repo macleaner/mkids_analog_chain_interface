@@ -38,7 +38,7 @@ class DiagramGenerator:
         frequency : float, optional
             Carrier frequency (Hz) to evaluate gain/noise at. Required if show_gain or show_noise is True.
         spectral_frequency : float, optional
-            Spectral/offset frequency (Hz) for noise analysis. Default: 1 kHz
+            Spectral frequency (Hz) for noise analysis. Default: 1 kHz
         show_gain : bool
             Show gain values on components
         show_noise : bool
@@ -153,7 +153,7 @@ class DiagramGenerator:
         
         if show_noise and frequency is not None:
             total_noise = self.chain.output_noise(frequency, spectral_frequency)
-            ax.text(5, 0.8, f"Output Noise: {total_noise:.2e} W/Hz @ {frequency/1e9:.3f} GHz (offset: {spectral_frequency/1e3:.1f} kHz)",
+            ax.text(5, 0.8, f"Output Noise: {total_noise:.2e} W/Hz @ {frequency/1e9:.3f} GHz (spectral: {spectral_frequency/1e3:.1f} kHz)",
                     ha='center', va='center', fontsize=9,
                     bbox=dict(boxstyle='round', facecolor='lightcoral', alpha=0.5))
         
@@ -179,9 +179,9 @@ class DiagramGenerator:
         frequency_range : array-like, optional
             Carrier frequency range in Hz for plotting. Default: 100 MHz to 3 GHz
         spectral_frequency : float, optional
-            Spectral/offset frequency (Hz) for noise vs carrier freq plot. Default: 1 kHz
+            Spectral frequency (Hz) for noise vs carrier freq plot. Default: 1 kHz
         spectral_range : array-like, optional
-            Spectral/offset frequency range in Hz for noise spectrum plot. 
+            Spectral frequency range in Hz for noise spectrum plot. 
             Default: 0.01 kHz to 10 kHz
         carrier_for_spectrum : float, optional
             Carrier frequency (Hz) to use for noise spectrum plot.
@@ -252,7 +252,7 @@ class DiagramGenerator:
         ax_noise.grid(True, alpha=0.3)
         ax_noise.set_xlabel('Carrier Frequency (GHz)', fontsize=10)
         ax_noise.set_ylabel('Output Noise PSD (W/Hz)', fontsize=10)
-        ax_noise.set_title(f'Output Noise vs Carrier Frequency (at {spectral_frequency/1e3:.1f} kHz spectral offset)', 
+        ax_noise.set_title(f'Output Noise vs Carrier Frequency (at {spectral_frequency/1e3:.1f} kHz spectral frequency)', 
                           fontsize=11, fontweight='bold')
         
         # Fourth: Noise spectrum within carrier bandwidth

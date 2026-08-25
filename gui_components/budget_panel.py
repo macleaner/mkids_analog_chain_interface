@@ -59,14 +59,15 @@ class BudgetPanel(QWidget):
         self.carrier_spin.setSuffix(" GHz")
         form.addRow("Carrier:", self.carrier_spin)
 
-        self.offset_spin = QDoubleSpinBox()
-        self.offset_spin.setRange(0.001, 1e9)
-        self.offset_spin.setValue(1000.0)
-        self.offset_spin.setDecimals(3)
-        self.offset_spin.setSuffix(" Hz")
-        self.offset_spin.setToolTip(
-            "Offset from the carrier, for sources with a noise spectrum.")
-        form.addRow("Offset:", self.offset_spin)
+        self.spectral_spin = QDoubleSpinBox()
+        self.spectral_spin.setRange(0.001, 1e9)
+        self.spectral_spin.setValue(1000.0)
+        self.spectral_spin.setDecimals(3)
+        self.spectral_spin.setSuffix(" Hz")
+        self.spectral_spin.setToolTip(
+            "Spectral (audio) frequency: the offset from the carrier at "
+            "which noise is evaluated.")
+        form.addRow("Spectral freq:", self.spectral_spin)
 
         group.setLayout(form)
         controls_layout.addWidget(group)
@@ -133,11 +134,11 @@ class BudgetPanel(QWidget):
             return
 
         carrier = self.carrier_spin.value() * 1e9
-        offset = self.offset_spin.value()
+        spectral = self.spectral_spin.value()
 
         try:
             self.budget = self.chain.noise_budget(
-                point, carrier, offset, at=self.side_combo.currentData())
+                point, carrier, spectral, at=self.side_combo.currentData())
         except (KeyError, ValueError, TypeError) as exc:
             self.budget = None
             self.export_button.setEnabled(False)
@@ -177,7 +178,7 @@ class BudgetPanel(QWidget):
                 fh.write(f"# chain,{self.chain.name}\n")
                 fh.write(f"# reference_plane,{self.budget.reference}\n")
                 fh.write(f"# carrier_Hz,{float(self.budget.carrier_hz)}\n")
-                fh.write(f"# offset_Hz,{float(self.budget.spectral_hz)}\n")
+                fh.write(f"# spectral_Hz,{float(self.budget.spectral_hz)}\n")
                 fh.write(f"# total_W_per_Hz,{float(self.budget.total_w)}\n")
                 fh.write(f"# total_K,{float(self.budget.total_k)}\n")
                 writer = csv.DictWriter(fh, fieldnames=list(rows[0]))

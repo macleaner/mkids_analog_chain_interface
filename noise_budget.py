@@ -157,7 +157,7 @@ class NoiseBudget:
 
         header = (f"Noise referred to {self.reference}   "
                   f"carrier {float(self.carrier_hz)/1e9:g} GHz, "
-                  f"offset {float(self.spectral_hz):g} Hz")
+                  f"spectral {float(self.spectral_hz):g} Hz")
         columns = (f"{'source':<16}{'own noise':>12}{'own T':>11}"
                    f"{'referral':>10}{'referred':>12}{'T_eq':>12}{'share':>8}")
         units = (f"{'':<16}{'[W/Hz]':>12}{'[K]':>11}"

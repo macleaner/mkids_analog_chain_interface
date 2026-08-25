@@ -76,8 +76,9 @@ def main():
     
     # For noise analysis, we need both carrier and spectral frequencies
     # Carrier frequency: the RF carrier (1.5 GHz in this case)
-    # Spectral frequency: the offset frequency for noise spectrum (e.g., 1 kHz for phase noise)
-    spectral_freq = 1e3  # 1 kHz offset for noise analysis
+    # Spectral (audio) frequency: the offset from the carrier at which noise
+    # is evaluated (e.g. 1 kHz for phase noise)
+    spectral_freq = 1e3  # 1 kHz from the carrier
     
     # A reference plane is a component plus which side of it, because the two
     # differ by that component's gain. Every noise source in the system is
@@ -85,14 +86,14 @@ def main():
     noise_at_detector = chain.noise_at_point("ColdAtten", freq, spectral_freq,
                                              at="input")
     print(f"Noise referred to detector (cold attenuator input) at "
-          f"{spectral_freq/1e3:.1f} kHz offset: {noise_at_detector:.2e} W/Hz")
+          f"{spectral_freq/1e3:.1f} kHz spectral: {noise_at_detector:.2e} W/Hz")
 
     noise_at_lna = chain.noise_at_point("LNA", freq, spectral_freq, at="input")
-    print(f"Noise referred to LNA input at {spectral_freq/1e3:.1f} kHz offset: "
+    print(f"Noise referred to LNA input at {spectral_freq/1e3:.1f} kHz spectral: "
           f"{noise_at_lna:.2e} W/Hz")
 
     noise_at_output = chain.output_noise(freq, spectral_freq)
-    print(f"Noise at system output at {spectral_freq/1e3:.1f} kHz offset: {noise_at_output:.2e} W/Hz")
+    print(f"Noise at system output at {spectral_freq/1e3:.1f} kHz spectral: {noise_at_output:.2e} W/Hz")
 
     # A full budget shows each source's own noise, the gain applied to refer it
     # to the plane, and the result in both power and temperature.
@@ -108,9 +109,9 @@ def main():
     print(f"{'=' * 70}\n")
     
     frequencies = np.logspace(8, 9.5, 20)  # 100 MHz to 3 GHz
-    spectral_freq = 1e3  # 1 kHz offset
+    spectral_freq = 1e3  # 1 kHz from the carrier
     print(f"{'Freq (GHz)':>12} {'Gain (dB)':>12} {'Noise (W/Hz)':>15}")
-    print(f"(Noise measured at {spectral_freq/1e3:.1f} kHz spectral offset)")
+    print(f"(Noise measured at {spectral_freq/1e3:.1f} kHz spectral frequency)")
     print("-" * 42)
     
     for f in frequencies:

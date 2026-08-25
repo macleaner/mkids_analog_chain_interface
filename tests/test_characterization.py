@@ -24,7 +24,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from conftest import CARRIER_FREQS, OFFSET_FREQS  # noqa: E402
+from conftest import CARRIER_FREQS, SPECTRAL_FREQS  # noqa: E402
 
 GOLDEN_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            "data", "golden_components.json")
@@ -95,7 +95,7 @@ def _snapshot_component(name, kwargs):
     if noise_attr is None:
         record["noise"] = None
     else:
-        for f in OFFSET_FREQS:
+        for f in SPECTRAL_FREQS:
             try:
                 record["noise"][repr(f)] = _jsonable(noise_attr(f))
             except TypeError:

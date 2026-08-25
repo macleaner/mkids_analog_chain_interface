@@ -25,8 +25,8 @@ Two new analysis dialogs have been added to the GUI to provide comprehensive sig
 
 **Parameters:**
 - **Carrier Frequency** (GHz): The RF carrier frequency for the analysis
-- **Start Offset Freq** (kHz): Beginning of spectral offset frequency range
-- **Stop Offset Freq** (kHz): End of spectral offset frequency range
+- **Start Spectral Freq** (kHz): Beginning of the spectral (audio) frequency range - the offset from the carrier
+- **Stop Spectral Freq** (kHz): End of the spectral (audio) frequency range
 - **Number of Points**: Resolution of the frequency sweep (10-10,000)
 - **Frequency Spacing**: Logarithmic or Linear
 - **Show Individual Component Contributions**: Optional checkbox to display breakdown by component
@@ -66,7 +66,7 @@ Two new analysis dialogs have been added to the GUI to provide comprehensive sig
 **Noise Analysis:**
 - Calculate output noise power spectral density
 - Identify dominant noise sources
-- Analyze 1/f noise behavior at low offset frequencies
+- Analyze 1/f noise behavior at low spectral frequencies
 - Optimize component ordering for minimum noise
 
 ## Future Enhancements

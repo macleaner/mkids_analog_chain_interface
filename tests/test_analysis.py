@@ -15,21 +15,21 @@ import registry  # noqa: E402
 from signal_chain import SignalChain  # noqa: E402
 
 
-def test_output_noise_accepts_an_array_of_offset_frequencies(sample_chain):
+def test_output_noise_accepts_an_array_of_spectral_frequencies(sample_chain):
     """
     Frequency sweeps used to raise ValueError from a scalar truth test on an
     array, forcing callers to loop one frequency at a time.
     """
-    offsets = np.logspace(0, 5, 25)
-    result = sample_chain.output_noise(1.5e9, offsets)
-    assert np.shape(result) == offsets.shape
+    spectral_freqs = np.logspace(0, 5, 25)
+    result = sample_chain.output_noise(1.5e9, spectral_freqs)
+    assert np.shape(result) == spectral_freqs.shape
     assert np.all(np.asarray(result) > 0)
 
 
 def test_noise_at_point_accepts_an_array(sample_chain):
-    offsets = np.logspace(0, 5, 25)
-    result = sample_chain.noise_at_point("LNA", 1.5e9, offsets, at="output")
-    assert np.shape(result) == offsets.shape
+    spectral_freqs = np.logspace(0, 5, 25)
+    result = sample_chain.noise_at_point("LNA", 1.5e9, spectral_freqs, at="output")
+    assert np.shape(result) == spectral_freqs.shape
 
 
 def test_vectorized_matches_scalar_loop(sample_chain):
@@ -38,9 +38,9 @@ def test_vectorized_matches_scalar_loop(sample_chain):
     adc = registry.create("converter.ad9082_adc", {})
     sample_chain.set_digitizer(dac, adc)
 
-    offsets = np.logspace(0, 5, 17)
-    vectorized = np.asarray(sample_chain.output_noise(1.5e9, offsets))
-    looped = np.asarray([sample_chain.output_noise(1.5e9, f) for f in offsets])
+    spectral_freqs = np.logspace(0, 5, 17)
+    vectorized = np.asarray(sample_chain.output_noise(1.5e9, spectral_freqs))
+    looped = np.asarray([sample_chain.output_noise(1.5e9, f) for f in spectral_freqs])
     assert np.allclose(vectorized, looped, rtol=1e-12)
 
 

@@ -597,7 +597,8 @@ class SignalChain:
         carrier_frequency : float or np.ndarray
             Carrier frequency in Hz (used for gain calculations)
         spectral_frequency : float or np.ndarray
-            Spectral/offset frequency in Hz (used for noise spectral shape)
+            Spectral frequency in Hz - the offset from the carrier at which
+            the noise is evaluated
         contributions : bool, optional
             If True, return a dict with individual component contributions
             
