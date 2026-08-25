@@ -9,6 +9,8 @@ import matplotlib.patches as mpatches
 from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
 import numpy as np
 
+from utils import to_dbm
+
 
 class DiagramGenerator:
     """
@@ -128,7 +130,7 @@ class DiagramGenerator:
                     if hasattr(component, 'temperature'):
                         noise_text = f"T={component.temperature}K"
                     else:
-                        noise_text = f"{noise_val:.1e} W/Hz"
+                        noise_text = f"{to_dbm(noise_val):.1f} dBm/Hz"
                     ax.text(x, y_center - 0.5, noise_text, ha='center', va='center',
                             fontsize=6, color='red', style='italic')
             
@@ -153,7 +155,7 @@ class DiagramGenerator:
         
         if show_noise and frequency is not None:
             total_noise = self.chain.output_noise(frequency, spectral_frequency)
-            ax.text(5, 0.8, f"Output Noise: {total_noise:.2e} W/Hz @ {frequency/1e9:.3f} GHz (spectral: {spectral_frequency/1e3:.1f} kHz)",
+            ax.text(5, 0.8, f"Output Noise: {to_dbm(total_noise):.1f} dBm/Hz @ {frequency/1e9:.3f} GHz (spectral: {spectral_frequency/1e3:.1f} kHz)",
                     ha='center', va='center', fontsize=9,
                     bbox=dict(boxstyle='round', facecolor='lightcoral', alpha=0.5))
         
@@ -247,21 +249,24 @@ class DiagramGenerator:
         
         # Third: Noise vs carrier frequency plot
         ax_noise = fig.add_subplot(gs[2])
-        noise = [self.chain.output_noise(f, spectral_frequency) for f in frequency_range]
-        ax_noise.loglog(frequency_range / 1e9, noise, 'r-', linewidth=2)
+        noise = to_dbm(np.asarray(
+            [self.chain.output_noise(f, spectral_frequency) for f in frequency_range]))
+        # dBm is already logarithmic, so only the frequency axis is log-scaled.
+        ax_noise.semilogx(frequency_range / 1e9, noise, 'r-', linewidth=2)
         ax_noise.grid(True, alpha=0.3)
         ax_noise.set_xlabel('Carrier Frequency (GHz)', fontsize=10)
-        ax_noise.set_ylabel('Output Noise PSD (W/Hz)', fontsize=10)
+        ax_noise.set_ylabel('Output Noise PSD (dBm/Hz)', fontsize=10)
         ax_noise.set_title(f'Output Noise vs Carrier Frequency (at {spectral_frequency/1e3:.1f} kHz spectral frequency)', 
                           fontsize=11, fontweight='bold')
         
         # Fourth: Noise spectrum within carrier bandwidth
         ax_spectrum = fig.add_subplot(gs[3])
-        noise_spectrum = [self.chain.output_noise(carrier_for_spectrum, f) for f in spectral_range]
-        ax_spectrum.loglog(spectral_range / 1e3, noise_spectrum, 'purple', linewidth=2)
+        noise_spectrum = to_dbm(np.asarray(
+            [self.chain.output_noise(carrier_for_spectrum, f) for f in spectral_range]))
+        ax_spectrum.semilogx(spectral_range / 1e3, noise_spectrum, 'purple', linewidth=2)
         ax_spectrum.grid(True, alpha=0.3)
-        ax_spectrum.set_xlabel('Spectral/Offset Frequency (kHz)', fontsize=10)
-        ax_spectrum.set_ylabel('Output Noise PSD (W/Hz)', fontsize=10)
+        ax_spectrum.set_xlabel('Spectral Frequency (kHz)', fontsize=10)
+        ax_spectrum.set_ylabel('Output Noise PSD (dBm/Hz)', fontsize=10)
         ax_spectrum.set_title(f'Noise Spectrum at {carrier_for_spectrum/1e9:.2f} GHz Carrier', 
                              fontsize=11, fontweight='bold')
         

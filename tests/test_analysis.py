@@ -317,3 +317,62 @@ def test_empty_chain_is_harmless():
     chain = SignalChain(name="empty")
     assert chain.total_gain(1.5e9) == 0.0
     assert chain.output_noise(1.5e9, 1e3) == 0.0
+
+
+# ----------------------------------------------------------------------
+# Display units
+# ----------------------------------------------------------------------
+
+def test_budget_reports_power_in_dbm_per_hz():
+    """Every quantity is available in dBm/Hz as well as W/Hz."""
+    from utils import to_dbm
+
+    chain = _digitizer_chain()
+    budget = chain.noise_budget("LNA", 1.5e9, 1e3, at="input")
+
+    assert float(budget.total_dbm_per_hz) == pytest.approx(
+        float(to_dbm(budget.total_w)), rel=1e-12)
+    for c in budget.contributions:
+        assert float(c.power_dbm_per_hz) == pytest.approx(
+            float(to_dbm(c.power_w)), rel=1e-12)
+        assert float(c.intrinsic_dbm_per_hz) == pytest.approx(
+            float(to_dbm(c.intrinsic_w)), rel=1e-12)
+
+
+def test_table_defaults_to_dbm_per_hz_and_can_switch():
+    chain = _digitizer_chain()
+    budget = chain.noise_budget("LNA", 1.5e9, 1e3, at="input")
+
+    default = budget.table()
+    assert "[dBm/Hz]" in default
+    assert "[W/Hz]" not in default
+
+    watts = budget.table("W/Hz")
+    assert "[W/Hz]" in watts
+    assert "[dBm/Hz]" not in watts
+
+    # Temperatures are unit-independent and appear either way.
+    assert "[K]" in default and "[K]" in watts
+
+    with pytest.raises(ValueError, match="unit must be one of"):
+        budget.table("dBc/Hz")
+
+
+def test_in_unit_conversion():
+    from noise_budget import DEFAULT_POWER_UNIT, in_unit
+    from utils import to_dbm
+
+    assert DEFAULT_POWER_UNIT == "dBm/Hz"
+    assert in_unit(1e-18, "W/Hz") == 1e-18
+    assert in_unit(1e-18, "dBm/Hz") == pytest.approx(float(to_dbm(1e-18)))
+    with pytest.raises(ValueError):
+        in_unit(1e-18, "K")
+
+
+def test_export_rows_carry_all_units():
+    chain = _digitizer_chain()
+    rows = chain.noise_budget("LNA", 1.5e9, 1e3, at="input").to_rows()
+    for key in ("intrinsic_w_per_hz", "intrinsic_dBm_per_hz", "intrinsic_K",
+                "contribution_w_per_hz", "contribution_dBm_per_hz",
+                "contribution_K"):
+        assert key in rows[0]

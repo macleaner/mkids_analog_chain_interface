@@ -19,6 +19,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QFont
 
+from noise_budget import DEFAULT_POWER_UNIT, POWER_UNITS
+
 
 class BudgetPanel(QWidget):
     """Panel presenting a noise budget at a selectable reference plane."""
@@ -68,6 +70,18 @@ class BudgetPanel(QWidget):
             "Spectral (audio) frequency: the offset from the carrier at "
             "which noise is evaluated.")
         form.addRow("Spectral freq:", self.spectral_spin)
+
+        self.unit_combo = QComboBox()
+        for unit in POWER_UNITS:
+            self.unit_combo.addItem(unit, unit)
+        self.unit_combo.setCurrentIndex(
+            self.unit_combo.findData(DEFAULT_POWER_UNIT))
+        self.unit_combo.setToolTip(
+            "Display unit for noise powers. dBm/Hz is easier to read; W/Hz is "
+            "the underlying unit. Temperatures are always in K.")
+        # Re-render immediately - no need to recompute, only reformat.
+        self.unit_combo.currentIndexChanged.connect(self._render)
+        form.addRow("Units:", self.unit_combo)
 
         group.setLayout(form)
         controls_layout.addWidget(group)
@@ -145,19 +159,36 @@ class BudgetPanel(QWidget):
             QMessageBox.warning(self, "Cannot compute budget", str(exc))
             return
 
-        self.table_view.setPlainText(self.budget.table())
+        self._render()
+
+    def current_unit(self):
+        """The selected display unit for noise powers."""
+        return self.unit_combo.currentData() or DEFAULT_POWER_UNIT
+
+    def _render(self):
+        """Format the existing budget in the selected unit."""
+        if self.budget is None:
+            return
+
+        unit = self.current_unit()
+        self.table_view.setPlainText(self.budget.table(unit))
         self.export_button.setEnabled(True)
 
         dominant = self.budget.dominant()
         if dominant is None:
             self.summary_label.setText("No noise sources in this chain.")
+            return
+
+        if unit == "dBm/Hz":
+            total_text = f"{float(self.budget.total_dbm_per_hz):.2f} dBm/Hz"
         else:
-            self.summary_label.setText(
-                f"Total {float(self.budget.total_w):.3e} W/Hz "
-                f"({float(self.budget.total_k):.1f} K equivalent).\n\n"
-                f"Dominated by {dominant.label} at "
-                f"{100 * float(self.budget.fraction(dominant)):.1f}%."
-            )
+            total_text = f"{float(self.budget.total_w):.3e} W/Hz"
+        self.summary_label.setText(
+            f"Total {total_text} "
+            f"({float(self.budget.total_k):.1f} K equivalent).\n\n"
+            f"Dominated by {dominant.label} at "
+            f"{100 * float(self.budget.fraction(dominant)):.1f}%."
+        )
 
     def _export_csv(self):
         """Write the budget rows, including the referral gains, to CSV."""
@@ -180,6 +211,7 @@ class BudgetPanel(QWidget):
                 fh.write(f"# carrier_Hz,{float(self.budget.carrier_hz)}\n")
                 fh.write(f"# spectral_Hz,{float(self.budget.spectral_hz)}\n")
                 fh.write(f"# total_W_per_Hz,{float(self.budget.total_w)}\n")
+                fh.write(f"# total_dBm_per_Hz,{float(self.budget.total_dbm_per_hz)}\n")
                 fh.write(f"# total_K,{float(self.budget.total_k)}\n")
                 writer = csv.DictWriter(fh, fieldnames=list(rows[0]))
                 writer.writeheader()

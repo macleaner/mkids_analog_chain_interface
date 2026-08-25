@@ -24,9 +24,24 @@ import numpy as np
 from utils import kb, to_dbm
 
 
+#: Units a noise PSD can be presented in. dBm/Hz is the default because it is
+#: far easier to read than a bare W/Hz exponent.
+POWER_UNITS = ("dBm/Hz", "W/Hz")
+DEFAULT_POWER_UNIT = "dBm/Hz"
+
+
 def as_temperature(power_w_per_hz):
     """Convert a noise PSD in W/Hz to an equivalent noise temperature in K."""
     return np.asarray(power_w_per_hz, dtype=float) / kb
+
+
+def in_unit(power_w_per_hz, unit=DEFAULT_POWER_UNIT):
+    """Convert a noise PSD in W/Hz to ``unit``."""
+    if unit == "W/Hz":
+        return power_w_per_hz
+    if unit == "dBm/Hz":
+        return to_dbm(power_w_per_hz)
+    raise ValueError(f"unit must be one of {POWER_UNITS}, got {unit!r}")
 
 
 def _magnitude(value):
@@ -66,7 +81,13 @@ class NoiseContribution:
         return as_temperature(self.power_w)
 
     @property
+    def intrinsic_dbm_per_hz(self):
+        """The source's own noise in dBm/Hz."""
+        return to_dbm(self.intrinsic_w)
+
+    @property
     def power_dbm_per_hz(self):
+        """The referred contribution in dBm/Hz."""
         return to_dbm(self.power_w)
 
     @property
@@ -125,7 +146,13 @@ class NoiseBudget:
         return {c.label: c.power_w for c in self.contributions}
 
     def to_rows(self) -> List[Dict[str, Any]]:
-        """Flat rows for CSV export or a GUI table."""
+        """
+        Flat rows for CSV export or a GUI table.
+
+        Carries every quantity in all three units - W/Hz, dBm/Hz and K - since
+        an export is data rather than a view, and converting after the fact is
+        more annoying than a couple of extra columns.
+        """
         rows = []
         for c in self.contributions:
             rows.append({
@@ -133,6 +160,7 @@ class NoiseBudget:
                 "kind": c.kind,
                 "referred_from": c.noise_reference,
                 "intrinsic_w_per_hz": c.intrinsic_w,
+                "intrinsic_dBm_per_hz": c.intrinsic_dbm_per_hz,
                 "intrinsic_K": c.intrinsic_k,
                 "referral_gain_dB": c.referral_gain_db,
                 "contribution_w_per_hz": c.power_w,
@@ -142,12 +170,21 @@ class NoiseBudget:
             })
         return rows
 
-    def table(self) -> str:
+    def table(self, unit: str = DEFAULT_POWER_UNIT) -> str:
         """
         Aligned text table of the budget.
 
+        Parameters
+        ----------
+        unit : {'dBm/Hz', 'W/Hz'}
+            Unit for the power columns. Temperatures are always shown in K,
+            being independent of the power unit.
+
         Requires scalar frequencies; for a sweep, build a budget per frequency.
         """
+        if unit not in POWER_UNITS:
+            raise ValueError(f"unit must be one of {POWER_UNITS}, got {unit!r}")
+
         for value in (self.carrier_hz, self.spectral_hz):
             if np.asarray(value).ndim != 0:
                 raise ValueError(
@@ -155,30 +192,37 @@ class NoiseBudget:
                     "frequency for a sweep, or use to_rows()."
                 )
 
+        # dBm/Hz reads as a fixed-point number, W/Hz needs an exponent.
+        if unit == "dBm/Hz":
+            fmt, width = ">12.2f", 12
+        else:
+            fmt, width = ">12.3e", 12
+
         header = (f"Noise referred to {self.reference}   "
                   f"carrier {float(self.carrier_hz)/1e9:g} GHz, "
                   f"spectral {float(self.spectral_hz):g} Hz")
-        columns = (f"{'source':<16}{'own noise':>12}{'own T':>11}"
-                   f"{'referral':>10}{'referred':>12}{'T_eq':>12}{'share':>8}")
-        units = (f"{'':<16}{'[W/Hz]':>12}{'[K]':>11}"
-                 f"{'[dB]':>10}{'[W/Hz]':>12}{'[K]':>12}{'[%]':>8}")
-        lines = [header, "=" * len(columns), columns, units, "-" * len(columns)]
+        columns = (f"{'source':<16}{'own noise':>{width}}{'own T':>11}"
+                   f"{'referral':>10}{'referred':>{width}}{'T_eq':>12}{'share':>8}")
+        units_row = (f"{'':<16}{'[' + unit + ']':>{width}}{'[K]':>11}"
+                     f"{'[dB]':>10}{'[' + unit + ']':>{width}}{'[K]':>12}{'[%]':>8}")
+        lines = [header, "=" * len(columns), columns, units_row,
+                 "-" * len(columns)]
 
         for c in self.contributions:
             lines.append(
                 f"{c.label[:15]:<16}"
-                f"{float(c.intrinsic_w):>12.3e}"
+                f"{float(in_unit(c.intrinsic_w, unit)):{fmt}}"
                 f"{float(c.intrinsic_k):>11.2f}"
                 f"{float(c.referral_gain_db):>+10.2f}"
-                f"{float(c.power_w):>12.3e}"
+                f"{float(in_unit(c.power_w, unit)):{fmt}}"
                 f"{float(c.temperature_k):>12.2f}"
                 f"{100 * float(self.fraction(c)):>8.2f}"
             )
 
         lines.append("-" * len(columns))
         lines.append(
-            f"{'TOTAL':<16}{'':>12}{'':>11}{'':>10}"
-            f"{float(self.total_w):>12.3e}"
+            f"{'TOTAL':<16}{'':>{width}}{'':>11}{'':>10}"
+            f"{float(in_unit(self.total_w, unit)):{fmt}}"
             f"{float(self.total_k):>12.2f}"
             f"{100.0:>8.2f}"
         )

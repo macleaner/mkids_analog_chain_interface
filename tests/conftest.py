@@ -20,6 +20,39 @@ CARRIER_FREQS = [1.0e8, 5.0e8, 1.0e9, 1.5e9, 2.5e9]
 SPECTRAL_FREQS = [1.0e0, 1.0e2, 1.0e3, 1.0e5]
 
 
+@pytest.fixture(autouse=True)
+def dialogs(monkeypatch):
+    """
+    Make Qt message boxes non-blocking, and record them.
+
+    GUI code reports internal errors through QMessageBox.critical. Headless,
+    that is a modal dialog with nobody to dismiss it, so a plain bug - a missing
+    import, say - manifests as the test suite hanging forever instead of
+    failing. Recording them instead means the error surfaces, and tests can
+    assert on what the user would have been shown.
+    """
+    try:
+        from PySide6.QtWidgets import QMessageBox
+    except ImportError:
+        yield []
+        return
+
+    recorded = []
+
+    def record(kind, default):
+        def handler(parent, title, text, *args, **kwargs):
+            recorded.append({"kind": kind, "title": title, "text": text})
+            return default
+        return staticmethod(handler)
+
+    monkeypatch.setattr(QMessageBox, "critical", record("critical", QMessageBox.Ok))
+    monkeypatch.setattr(QMessageBox, "warning", record("warning", QMessageBox.Ok))
+    monkeypatch.setattr(QMessageBox, "information",
+                        record("information", QMessageBox.Ok))
+    monkeypatch.setattr(QMessageBox, "question", record("question", QMessageBox.No))
+    yield recorded
+
+
 @pytest.fixture
 def sample_chain():
     """A small but representative chain: warm attenuator, cryo cable, LNA."""

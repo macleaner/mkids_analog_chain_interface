@@ -106,3 +106,21 @@ def test_csv_export_includes_referral_gains(window, tmp_path, monkeypatch):
     data_lines = [l for l in text.splitlines()
                   if l and not l.startswith("#")]
     assert len(data_lines) == 1 + len(window.budget_panel.budget.contributions)
+
+
+def test_unit_selector_defaults_to_dbm_and_toggles(window):
+    _build_chain(window)
+    window._analyze_chain()
+    panel = window.budget_panel
+
+    assert panel.current_unit() == "dBm/Hz"
+    panel.compute()
+    assert "[dBm/Hz]" in panel.table_view.toPlainText()
+    assert "dBm/Hz" in panel.summary_label.text()
+
+    # Switching units reformats the existing budget without recomputing.
+    budget_before = panel.budget
+    panel.unit_combo.setCurrentIndex(panel.unit_combo.findData("W/Hz"))
+    assert panel.budget is budget_before
+    assert "[W/Hz]" in panel.table_view.toPlainText()
+    assert "W/Hz" in panel.summary_label.text()
