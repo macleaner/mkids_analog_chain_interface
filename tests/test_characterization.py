@@ -26,6 +26,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from conftest import CARRIER_FREQS, SPECTRAL_FREQS  # noqa: E402
 
+# Held constant while sweeping the other axis.
+REF_CARRIER = 1.5e9
+REF_SPECTRAL = 1.0e3
+
 GOLDEN_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            "data", "golden_components.json")
 
@@ -91,20 +95,26 @@ def _snapshot_component(name, kwargs):
         except Exception as exc:
             record["gain"][repr(f)] = f"ERROR {type(exc).__name__}"
 
+    # noise() depends on both frequencies, so sweep each axis with the other
+    # held at a reference value. A model that mixes the two axes up shows a
+    # change on both sweeps.
     noise_attr = getattr(obj, "noise", None)
     if noise_attr is None:
         record["noise"] = None
     else:
+        record["noise"] = {"vs_carrier": {}, "vs_spectral": {}}
+        for f in CARRIER_FREQS:
+            try:
+                record["noise"]["vs_carrier"][repr(f)] = _jsonable(
+                    noise_attr(f, REF_SPECTRAL))
+            except Exception as exc:
+                record["noise"]["vs_carrier"][repr(f)] = f"ERROR {type(exc).__name__}"
         for f in SPECTRAL_FREQS:
             try:
-                record["noise"][repr(f)] = _jsonable(noise_attr(f))
-            except TypeError:
-                try:
-                    record["noise"][repr(f)] = _jsonable(noise_attr())
-                except Exception as exc:
-                    record["noise"][repr(f)] = f"ERROR {type(exc).__name__}"
+                record["noise"]["vs_spectral"][repr(f)] = _jsonable(
+                    noise_attr(REF_CARRIER, f))
             except Exception as exc:
-                record["noise"][repr(f)] = f"ERROR {type(exc).__name__}"
+                record["noise"]["vs_spectral"][repr(f)] = f"ERROR {type(exc).__name__}"
     return record
 
 

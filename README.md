@@ -173,8 +173,9 @@ Properties that matter for bookkeeping:
 Components declare their own parameters and register themselves:
 
 ```python
-from component import PassiveComponent
+from component import PassiveComponent, flat_in_spectral
 from registry import ParamSpec, register
+from utils import kb
 
 @register("cable.my_coax", category="Cables", label="My Coax",
           params=(ParamSpec("length_m", default=1.0, label="Length", unit="m",
@@ -184,8 +185,12 @@ class MyCoax(PassiveComponent):
         super().__init__(name=name, params={"length_m": length_m})
         self.length = length_m
 
-    def gain(self, frequency):
+    def gain(self, carrier_frequency):
         return -0.5 * self.length
+
+    # Optional. Omit it and the component is treated as noiseless.
+    def noise(self, carrier_frequency, spectral_frequency):
+        return flat_in_spectral(kb * 300, spectral_frequency)
 ```
 
 That is all that is needed - the component then appears in the GUI library with
@@ -216,28 +221,32 @@ Every analysis method takes two frequencies, and they mean different things:
 
 `gain(carrier_frequency)` is always a function of the carrier frequency alone.
 
-For noise, which one matters depends on the source:
+**Every component takes both frequencies for noise**, so noise is computed the
+same way for all of them:
 
-- **DAC phase noise** is a strong function of spectral frequency (it is a 1/f
-  skirt around the carrier) and scales with carrier power.
-- **An amplifier's noise temperature** depends on carrier frequency and is
-  essentially white in spectral frequency near the carrier.
-- **Attenuator Johnson noise** and the **ADC noise floor** depend on neither.
+```python
+component.noise(carrier_frequency, spectral_frequency)   # -> W/Hz
+```
 
-> **Known issue:** `noise()` currently receives only one frequency - the
-> spectral frequency - for every source. That is correct for the DAC and
-> irrelevant for the attenuator and ADC, but wrong for the three amplifier
-> models, whose noise curves are defined over 0-3 GHz of *carrier* frequency.
-> Fed a spectral frequency they return their value near DC:
->
-> | Model | Reported | Correct at 1.5 GHz | Overstated |
-> |---|---|---|---|
-> | ASU 3 GHz LNA | 30.00 K | 6.00 K | 5.00x |
-> | CryoElec LNA | 5.00 K | 4.00 K | 1.25x |
-> | ZX60-3018G+ | 262.59 K | 238.31 K | 1.10x |
->
-> Amplifier contributions in a noise budget are therefore overstated. Fixing it
-> means passing both frequencies to `noise()` so each model uses what it needs.
+The carrier sets the **level**; the spectral frequency sets the **shape**:
+
+| Source | Level from | Shape in spectral |
+|---|---|---|
+| Amplifiers | carrier frequency (noise temperature vs RF) | white |
+| DAC | carrier power (+ any carrier-frequency dependence) | 1/f skirt |
+| Attenuator | temperature, `k_B·T` | white |
+| ADC | fixed floor | white |
+
+A source that is white near the carrier computes its level from the carrier and
+returns it flat across the spectral axis - `component.flat_in_spectral(level,
+spectral_frequency)` does that. A source with spectral structure returns that
+shape, shifted by whatever level the carrier implies. `AD9082_DAC` shows the
+pattern: its `carrier_level_db()` hook is the documented place for a measured
+carrier dependence, currently 0 dB because the fitted model has none.
+
+Because every source shares the signature, sweeping either axis returns a result
+shaped like that axis, and the chain never has to know which kind of source it
+is holding.
 
 ### Noise Propagation
 

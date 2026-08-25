@@ -110,6 +110,8 @@ class DiagramPanel(QWidget):
             frequency = self.frequency_spin.value() * 1e9  # Convert to Hz
             show_gain = self.show_gain_check.isChecked()
             show_noise = self.show_noise_check.isChecked()
+            # Spectral frequency for the annotated noise values.
+            spectral_frequency = 1e3
             
             # Clear figure
             self.figure.clear()
@@ -191,7 +193,7 @@ class DiagramPanel(QWidget):
                 
                 # Add noise if requested
                 if show_noise and hasattr(component, 'noise'):
-                    noise_val = component.noise(frequency)
+                    noise_val = component.noise(frequency, spectral_frequency)
                     if noise_val > 0:
                         # Show noise temperature if thermal
                         if hasattr(component, 'temperature'):
@@ -221,7 +223,6 @@ class DiagramPanel(QWidget):
                         bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
             
             if show_noise:
-                spectral_frequency = 1e3  # 1 kHz spectral frequency
                 total_noise = self.chain.output_noise(frequency, spectral_frequency)
                 ax.text(5, 0.8, f"Output Noise: {total_noise:.2e} W/Hz @ {frequency/1e9:.3f} GHz (spectral: {spectral_frequency/1e3:.1f} kHz)",
                         ha='center', va='center', fontsize=9,

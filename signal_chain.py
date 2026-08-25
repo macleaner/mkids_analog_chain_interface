@@ -23,22 +23,30 @@ from utils import to_dbm, to_W
 FORMAT_VERSION = 2
 
 
-def _evaluate_noise(component, spectral_frequency):
+def _evaluate_noise(component, carrier_frequency, spectral_frequency):
     """
     Evaluate a component's noise PSD in W/Hz, or return None if it has none.
 
-    Components vary in whether ``noise()`` takes a frequency, so both calling
-    conventions are tried. Anything other than a signature mismatch propagates:
-    a model that raises is a bug to surface, not a component to silently treat
-    as noiseless, which would quietly under-report the noise budget.
+    Registered components take ``noise(carrier_frequency, spectral_frequency)``:
+    the carrier sets the level, the spectral frequency the shape. Older
+    duck-typed components taking one frequency, or none, are still accepted -
+    they are given the spectral frequency, which is what they used to receive.
+
+    Anything other than a signature mismatch propagates: a model that raises is
+    a bug to surface, not a component to silently treat as noiseless, which
+    would quietly under-report the noise budget.
     """
     noise_attr = getattr(component, "noise", None)
     if noise_attr is None:
         return None
     try:
+        return noise_attr(carrier_frequency, spectral_frequency)
+    except TypeError:
+        pass
+    # Legacy single-frequency convention.
+    try:
         return noise_attr(spectral_frequency)
     except TypeError:
-        # Signature mismatch: the model takes no frequency argument.
         return noise_attr()
 
 
@@ -359,7 +367,8 @@ class SignalChain:
 
         contributions = []
         for stage_index, (label, component, kind) in enumerate(stages):
-            intrinsic = _evaluate_noise(component, spectral_frequency)
+            intrinsic = _evaluate_noise(
+                component, carrier_frequency, spectral_frequency)
             if not _has_any_noise(intrinsic):
                 continue
 

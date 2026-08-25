@@ -72,7 +72,8 @@ def test_every_registered_component_round_trips(type_id, use_defaults):
     for f in CARRIER_FREQS:
         assert _same(original.gain(f), restored.gain(f)), f"gain differs at {f} Hz"
     for f in SPECTRAL_FREQS:
-        assert _same(original.noise(f), restored.noise(f)), f"noise differs at {f} Hz"
+        assert _same(original.noise(1.5e9, f), restored.noise(1.5e9, f)), \
+            f"noise differs at spectral {f} Hz"
 
 
 @pytest.mark.parametrize("type_id", [e.type_id for e in registry.entries()])

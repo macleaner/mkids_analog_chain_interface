@@ -18,7 +18,8 @@ import numpy as np
 import scipy.interpolate as interpolate
 from scipy.optimize import curve_fit
 
-from component import ActiveComponent, ADCComponent, DACComponent, PassiveComponent
+from component import (ActiveComponent, ADCComponent, DACComponent,
+                       PassiveComponent, flat_in_spectral)
 from registry import ParamSpec, register
 from utils import kb
 
@@ -114,13 +115,30 @@ class AD9082_DAC(DACComponent):
             return np.full_like(carrier_frequency, self.gain_db)
         return self.gain_db
 
-    def noise(self, frequency):
+    def carrier_level_db(self, carrier_frequency):
         """
-        Return DAC phase noise PSD in W/Hz at the given spectral frequency.
+        Level shift in dB applied to the phase-noise skirt at this carrier.
+
+        The datasheet gives phase noise at a few discrete carriers, but the
+        fitted model here is carrier-independent, so this is 0 dB. It is the
+        hook for a measured carrier dependence: the 1/f-ish spectral shape
+        would be preserved and simply shifted by whatever this returns.
+        """
+        return 0.0
+
+    def noise(self, carrier_frequency, spectral_frequency):
+        """
+        Return DAC phase noise PSD in W/Hz.
+
+        The shape comes from the spectral frequency - this is a 1/f skirt around
+        the carrier - and the level from the carrier power, plus any carrier
+        frequency dependence from :meth:`carrier_level_db`.
         """
         noise_dbc = 10 * np.log10(
-            1e3 * exponential(frequency, self.popt[0], self.popt[1], self.popt[2]))
-        noise_dbm = noise_dbc + self.carrier_power_dbm
+            1e3 * exponential(spectral_frequency,
+                              self.popt[0], self.popt[1], self.popt[2]))
+        noise_dbm = (noise_dbc + self.carrier_power_dbm
+                     + self.carrier_level_db(carrier_frequency))
         return 10**(noise_dbm / 10) * 1e-3
 
 
@@ -145,9 +163,16 @@ class AD9082_ADC(ADCComponent):
             return np.full_like(carrier_frequency, self.gain_db)
         return self.gain_db
 
-    def noise(self, frequency=None):
-        """Return ADC noise PSD in W/Hz. White, so frequency is ignored."""
-        return 10**(self.adc_noise_density_dbm / 10.0) * 1e-3
+    def noise(self, carrier_frequency, spectral_frequency):
+        """
+        Return ADC noise PSD in W/Hz.
+
+        A fixed white floor, so flat in both frequencies. The datasheet does
+        give SNR versus carrier frequency (see the legacy AD9082 helper); wiring
+        that in would make this carrier-dependent.
+        """
+        level = 10**(self.adc_noise_density_dbm / 10.0) * 1e-3
+        return flat_in_spectral(level, spectral_frequency)
 
 
 @register("amplifier.cryoelec_lna", category="Amplifiers",
@@ -175,8 +200,10 @@ class CryoElec_LNA(ActiveComponent):
     def gain(self, carrier_frequency):
         return self.gain_f(carrier_frequency)
 
-    def noise(self, f):
-        return self.noise_f(f)
+    def noise(self, carrier_frequency, spectral_frequency):
+        """Noise temperature varies with carrier; white in spectral frequency."""
+        return flat_in_spectral(self.noise_f(carrier_frequency),
+                                spectral_frequency)
 
 
 @register("amplifier.zx60_3018g_plus", category="Amplifiers",
@@ -214,8 +241,10 @@ class ZX60_3018Gplus(ActiveComponent):
         # Measured response is preferred over the datasheet fit.
         return self.meas_gain_func(carrier_frequency)
 
-    def noise(self, f):
-        return self.noise_f(f)
+    def noise(self, carrier_frequency, spectral_frequency):
+        """Noise figure varies with carrier; white in spectral frequency."""
+        return flat_in_spectral(self.noise_f(carrier_frequency),
+                                spectral_frequency)
 
 
 @register("attenuator", category="Attenuators", label="Attenuator",
@@ -243,9 +272,9 @@ class Attenuator(PassiveComponent):
         self.attenuation = attenuation
         self.temperature = temperature
 
-    def noise(self, frequency=None):
-        """Thermal noise is frequency-independent; frequency accepted for API parity."""
-        return kb * self.temperature
+    def noise(self, carrier_frequency, spectral_frequency):
+        """Johnson noise: k_B*T, flat in both carrier and spectral frequency."""
+        return flat_in_spectral(kb * self.temperature, spectral_frequency)
 
     def gain(self, carrier_frequency=None):
         if isinstance(carrier_frequency, (float, int)):
@@ -283,8 +312,10 @@ class ASU_3GHz_LNA(ActiveComponent):
     def gain(self, carrier_frequency):
         return self.gain_f(carrier_frequency)
 
-    def noise(self, f):
-        return self.noise_f(f)
+    def noise(self, carrier_frequency, spectral_frequency):
+        """Noise temperature varies with carrier; white in spectral frequency."""
+        return flat_in_spectral(self.noise_f(carrier_frequency),
+                                spectral_frequency)
 
 
 class _InterpolatedFilter(PassiveComponent):

@@ -77,7 +77,7 @@ def test_a_failing_noise_model_is_not_silently_treated_as_noiseless():
         def gain(self, frequency):
             return 0.0
 
-        def noise(self, frequency=None):
+        def noise(self, carrier_frequency, spectral_frequency):
             raise RuntimeError("datasheet interpolation failed")
 
     chain = SignalChain(name="broken")
@@ -139,7 +139,7 @@ def test_amplifier_noise_is_amplified_by_its_own_gain():
     chain = SignalChain(name="lna")
     chain.add_component(lna, label="LNA")
 
-    expected = lna.noise(1.5e9) * 10 ** (lna.gain(1.5e9) / 10)
+    expected = lna.noise(1.5e9, 1e3) * 10 ** (lna.gain(1.5e9) / 10)
     assert chain.output_noise(1.5e9, 1.5e9) == pytest.approx(expected, rel=1e-9)
 
 

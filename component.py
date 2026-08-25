@@ -15,7 +15,28 @@ was used to build it.
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 
+import numpy as np
+
 from registry import JSON_SCALARS
+
+
+def flat_in_spectral(level, spectral_frequency):
+    """
+    Spread a carrier-determined noise level flat across the spectral axis.
+
+    For a source that is white near the carrier, the level is a function of
+    carrier frequency alone; this returns it shaped like ``spectral_frequency``
+    so every component's ``noise()`` yields the same shape for the same inputs.
+
+    Broadcasting follows numpy rules, so sweeping the carrier and the spectral
+    frequency simultaneously requires compatible shapes.
+    """
+    level_arr = np.asarray(level, dtype=float)
+    spectral_arr = np.asarray(spectral_frequency, dtype=float)
+    if level_arr.ndim == 0 and spectral_arr.ndim == 0:
+        return float(level_arr)
+    # Adding zeros broadcasts without changing the value.
+    return level_arr + np.zeros_like(spectral_arr)
 
 
 class Component(ABC):
@@ -94,18 +115,25 @@ class Component(ABC):
             Gain in dB (negative values indicate loss)
         """
 
-    def noise(self, frequency):
+    def noise(self, carrier_frequency, spectral_frequency):
         """
         Return the noise power spectral density of this component in W/Hz.
 
-        Not all components contribute noise; the default returns 0.
+        Every component takes both frequencies, so noise can be evaluated the
+        same way for all of them:
 
-        .. warning::
-           Which frequency this receives is currently ambiguous - see the
-           note on ``noise_reference`` and the README. The chain passes the
-           *spectral* frequency, which is right for DAC phase noise but wrong
-           for an amplifier noise temperature, which varies with the *carrier*
-           frequency. Tracked as a known issue.
+        * ``carrier_frequency`` sets the *level* - the RF frequency of the tone
+          probing the system. An amplifier's noise temperature lives here.
+        * ``spectral_frequency`` sets the *shape* - the offset from the carrier
+          at which the noise is evaluated. DAC phase noise lives here.
+
+        A source that is white in spectral frequency computes its level from the
+        carrier and returns it flat across the spectral axis; use
+        :func:`flat_in_spectral` for that. A source with spectral structure
+        returns that shape, shifted by whatever level the carrier frequency
+        implies.
+
+        Not all components contribute noise; the default returns 0.
         """
         return 0.0
 

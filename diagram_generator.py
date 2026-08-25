@@ -122,7 +122,7 @@ class DiagramGenerator:
             
             # Add noise if requested
             if show_noise and hasattr(component, 'noise'):
-                noise_val = component.noise(frequency)
+                noise_val = component.noise(frequency, spectral_frequency)
                 if noise_val > 0:
                     # Show noise temperature if thermal
                     if hasattr(component, 'temperature'):
