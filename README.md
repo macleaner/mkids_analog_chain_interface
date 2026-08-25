@@ -104,7 +104,7 @@ diagram_gen.generate("my_system.pdf", frequency=freq, show_gain=True)
 ### Running Examples
 
 ```bash
-cd /home/maclean/code/analog_chain_interface/examples
+cd examples
 python simple_example.py
 ```
 
@@ -112,6 +112,22 @@ This will:
 1. Build a sample signal chain
 2. Perform gain and noise analysis
 3. Generate PDF diagrams showing the system
+
+### Notebook walkthrough
+
+`examples/analog_chain_walkthrough.ipynb` is the guided tour: loading a `.json`
+chain file, inspecting a chain, gain and noise sweeps with plots, the noise
+budget at any reference plane, editing a component, and building one from
+scratch.
+
+```bash
+jupyter lab examples/analog_chain_walkthrough.ipynb
+```
+
+It loads `examples/simple_cryogenic_system.json`, which is the same file the
+browser GUI's **download chain.json** button produces — point it at your own
+download to carry a chain from the GUI into a notebook. Its plots are the ones
+the browser draws, so the two can be compared directly.
 
 ## Saving and Loading Chains
 
@@ -402,8 +418,12 @@ analog_chain_interface/
 ├── hardware_models.py         # RF component library
 ├── utils.py                   # Utility functions
 ├── diagram_generator.py       # Visualization
+├── chain_api.py               # JSON facade (drives the browser GUI)
 ├── examples/
+│   ├── analog_chain_walkthrough.ipynb   # Guided notebook tour
+│   ├── simple_cryogenic_system.json     # Example chain file
 │   └── simple_example.py      # Example script
+├── web/                       # Browser build (see web/README.md)
 ├── analog_chains/             # Legacy implementations
 │   ├── default.py
 │   ├── mcgill_full.py

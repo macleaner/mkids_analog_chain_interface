@@ -377,24 +377,19 @@ def sweep_noise(carrier_hz: float, start_hz: float, stop_hz: float,
 
     series = []
     if contributions:
-        # One budget per spectral point: output_noise's own contribution mode
-        # returns a dict keyed by label, but only for scalar inputs on some
-        # components, so the budget path is used for a guaranteed-uniform shape.
-        per_label: Dict[str, List[Optional[float]]] = {}
-        for value in spectral:
-            result = _CHAIN.output_budget(carrier, float(value))
-            for contribution in result.contributions:
-                per_label.setdefault(contribution.label, []).append(
-                    _num(contribution.power_w))
-        # Ordered largest-first by peak, so the legend reads in the same order
-        # as the budget table rather than in dict-insertion order.
-        series = [{"label": label,
-                   "w_per_hz": values,
-                   "dbm_per_hz": _arr(to_dbm(np.asarray(
-                       [v if v is not None else np.nan for v in values])))}
-                  for label, values in per_label.items()]
-        series.sort(key=lambda s: max((v for v in s["w_per_hz"] if v is not None),
-                                      default=0.0), reverse=True)
+        # One budget for the whole sweep: every model broadcasts over the
+        # spectral axis, so the contributions come back already shaped like it.
+        # NoiseBudget ranks them by peak, which is the order the budget table
+        # shows, so the plot legend and the table agree without sorting here.
+        result = _CHAIN.output_budget(carrier, spectral)
+        for contribution in result.contributions:
+            # A source that is flat in spectral frequency may still come back
+            # scalar; broadcast so every series is the length of the axis.
+            watts = np.broadcast_to(
+                np.asarray(contribution.power_w, dtype=float), spectral.shape)
+            series.append({"label": contribution.label,
+                           "w_per_hz": _arr(watts),
+                           "dbm_per_hz": _arr(to_dbm(watts))})
 
     return {"carrier_hz": _num(carrier), "spectral_hz": _arr(spectral),
             "total_w_per_hz": _arr(total),

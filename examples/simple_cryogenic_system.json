@@ -1,0 +1,88 @@
+{
+  "format_version": 2,
+  "name": "Simple Cryogenic System",
+  "description": "Room temp -> cryostat -> LNA -> warm amplification, with an AD9082 at each end.",
+  "metadata": {},
+  "saved_utc": "2026-08-25T18:13:53+00:00",
+  "digitizer": {
+    "dac": {
+      "type": "converter.ad9082_dac",
+      "name": "AD9082_DAC",
+      "params": {
+        "carrier_power_dbm": -10.0,
+        "gain_db": 0.0
+      }
+    },
+    "adc": {
+      "type": "converter.ad9082_adc",
+      "name": "AD9082_ADC",
+      "params": {
+        "gain_db": 0.0
+      }
+    }
+  },
+  "components": [
+    {
+      "type": "attenuator",
+      "name": "InputAtten",
+      "params": {
+        "attenuation": -10.0,
+        "temperature": 300.0
+      },
+      "label": "InputAtten"
+    },
+    {
+      "type": "cable.fm_f141",
+      "name": "WarmCable_In",
+      "params": {
+        "length_m": 2.0
+      },
+      "label": "WarmCable_In"
+    },
+    {
+      "type": "cable.sma_ss086_cryo",
+      "name": "CryoCable",
+      "params": {
+        "length_m": 0.5,
+        "temperature": 4.0
+      },
+      "label": "CryoCable"
+    },
+    {
+      "type": "attenuator",
+      "name": "ColdAtten",
+      "params": {
+        "attenuation": -20.0,
+        "temperature": 4.0
+      },
+      "label": "ColdAtten"
+    },
+    {
+      "type": "amplifier.asu_3ghz_lna",
+      "name": "LNA",
+      "params": {},
+      "label": "LNA"
+    },
+    {
+      "type": "cable.sma_ss086_cryo",
+      "name": "ReturnCable",
+      "params": {
+        "length_m": 0.5,
+        "temperature": 50.0
+      },
+      "label": "ReturnCable"
+    },
+    {
+      "type": "amplifier.zx60_3018g_plus",
+      "name": "WarmAmp1",
+      "params": {},
+      "label": "WarmAmp1"
+    },
+    {
+      "type": "amplifier.zx60_3018g_plus",
+      "name": "WarmAmp2",
+      "params": {},
+      "label": "WarmAmp2"
+    }
+  ]
+}

@@ -66,6 +66,10 @@ Guarded by [`tests/test_chain_api.py`](../tests/test_chain_api.py), which
 checks that every response really is JSON-serializable and that the facade
 reports `SignalChain`'s numbers rather than any of its own.
 
+For working with chains outside the GUI — including loading a chain this page
+downloaded, and reproducing both of its plots — see
+[`examples/analog_chain_walkthrough.ipynb`](../examples/analog_chain_walkthrough.ipynb).
+
 Component forms are generated from `registry.ParamSpec`, and submitted values
 go back through `ParamSpec.validate`. The browser panel and the Qt panel
 therefore share one declaration of every parameter's range, unit and error
