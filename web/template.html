@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Analog chain calculator</title>
+<!--__PYODIDE_TAG__-->
+<style>/*__UPLOT_CSS__*/</style>
+<style>
+:root{
+  --bg:#16181d; --panel:#1d2027; --panel2:#232730; --line:#31363f;
+  --ink:#dfe3ea; --ink2:#9aa3b2; --ink3:#6b7382;
+  --accent:#d9a441; --accent2:#6f9ceb; --bad:#e0655f;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:13px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+h1{font-size:13px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink2);margin:0 0 10px}
+h2{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink3);margin:16px 0 7px}
+h2:first-child{margin-top:0}
+button{font:inherit;color:var(--ink);background:var(--panel2);
+  border:1px solid var(--line);border-radius:5px;padding:4px 10px;cursor:pointer}
+button:hover{border-color:var(--ink3)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#1a1a1a;font-weight:600}
+button.on{border-color:var(--accent);color:var(--accent)}
+input,select{font:inherit;color:var(--ink);background:var(--bg);
+  border:1px solid var(--line);border-radius:4px;padding:3px 6px;width:100%}
+input:focus,select:focus{outline:none;border-color:var(--accent2)}
+
+#boot{position:fixed;inset:0;z-index:99;display:flex;align-items:center;
+  justify-content:center;flex-direction:column;gap:14px;background:var(--bg)}
+#boot .spin{width:26px;height:26px;border:3px solid var(--line);
+  border-top-color:var(--accent);border-radius:50%;animation:s .8s linear infinite}
+@keyframes s{to{transform:rotate(360deg)}}
+#bootmsg{font-family:var(--mono);font-size:12px;color:var(--ink2)}
+#bootnote{font-size:11px;color:var(--ink3);max-width:420px;text-align:center}
+
+#top{display:flex;align-items:center;gap:10px;padding:9px 14px;
+  border-bottom:1px solid var(--line);background:var(--panel)}
+#top .brand{font-weight:600;letter-spacing:.04em}
+#top .brand b{color:var(--accent)}
+#chainname{font-family:var(--mono);font-size:12px;color:var(--ink2)}
+#top .spacer{flex:1}
+#stamp{font-family:var(--mono);font-size:10px;color:var(--ink3);text-align:right;line-height:1.4}
+
+#grid{display:grid;grid-template-columns:236px minmax(320px,1fr) 380px;
+  gap:1px;background:var(--line);height:calc(100vh - 44px)}
+#grid>section{background:var(--bg);overflow-y:auto;padding:13px}
+#plots{grid-column:1/-1;background:var(--bg);padding:13px;
+  display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:1100px){
+  #grid{grid-template-columns:1fr;height:auto}
+  #plots{grid-template-columns:1fr}
+}
+
+.cat{margin-bottom:12px}
+.cat>div.h{font-family:var(--mono);font-size:10px;color:var(--accent);
+  text-transform:uppercase;letter-spacing:.07em;margin:0 0 4px}
+.lib{display:block;width:100%;text-align:left;padding:4px 7px;margin-bottom:2px;
+  background:transparent;border:1px solid transparent;font-size:12px;border-radius:4px}
+.lib:hover{background:var(--panel2);border-color:var(--line)}
+
+.stage{border:1px solid var(--line);border-radius:6px;margin-bottom:5px;
+  background:var(--panel);overflow:hidden}
+.stage.sel{border-color:var(--accent)}
+.stage>.hd{display:flex;align-items:center;gap:8px;padding:6px 9px;cursor:pointer}
+.stage>.hd:hover{background:var(--panel2)}
+.stage .idx{font-family:var(--mono);font-size:10px;color:var(--ink3);min-width:14px}
+.stage .lbl{font-weight:500}
+.stage .kind{font-family:var(--mono);font-size:9px;padding:1px 5px;border-radius:3px;
+  background:var(--panel2);color:var(--ink3);text-transform:uppercase}
+.stage .kind.dac,.stage .kind.adc{background:#2f3a4d;color:var(--accent2)}
+.stage .sp{flex:1}
+.stage .body{padding:2px 9px 9px;border-top:1px solid var(--line);display:none}
+.stage.sel .body{display:block}
+.prow{display:grid;grid-template-columns:1fr 92px;gap:7px;align-items:center;
+  margin-top:6px;font-size:12px}
+.prow .u{font-family:var(--mono);font-size:10px;color:var(--ink3)}
+.doc{font-size:11px;color:var(--ink3);margin:5px 0 0;line-height:1.45}
+
+.ctl{display:grid;grid-template-columns:1fr 116px;gap:8px;align-items:center;
+  margin-bottom:6px;font-size:12px}
+.seg{display:flex;gap:0;margin-bottom:8px}
+.seg button{border-radius:0;flex:1;padding:3px 6px;font-size:11px}
+.seg button:first-child{border-radius:5px 0 0 5px}
+.seg button:last-child{border-radius:0 5px 5px 0}
+
+table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px}
+th{text-align:right;color:var(--ink3);font-weight:500;padding:4px 5px;
+  border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg)}
+th:first-child,td:first-child{text-align:left}
+td{padding:3px 5px;border-bottom:1px solid #24272e}
+tr.dom td{color:var(--accent)}
+.bar{height:3px;background:var(--accent2);border-radius:2px;min-width:1px}
+
+.tot{display:flex;gap:14px;flex-wrap:wrap;font-family:var(--mono);font-size:11px;
+  color:var(--ink2);background:var(--panel);border:1px solid var(--line);
+  border-radius:6px;padding:7px 9px;margin-bottom:9px}
+.tot b{color:var(--ink);font-weight:600}
+.plot{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:9px}
+.plot .cap{font-family:var(--mono);font-size:10px;color:var(--ink3);margin-bottom:6px}
+#err{display:none;margin:9px 13px;padding:8px 11px;border-radius:5px;
+  background:#3a2422;border:1px solid var(--bad);color:#f0b3ae;
+  font-family:var(--mono);font-size:11px;white-space:pre-wrap}
+.uplot{font-family:var(--mono)}
+</style>
+</head>
+<body>
+
+<div id="boot">
+  <div class="spin"></div>
+  <div id="bootmsg">starting…</div>
+  <div id="bootnote"></div>
+</div>
+
+<div id="top">
+  <span class="brand"><b>t0</b>.technology</span>
+  <span id="chainname">—</span>
+  <div class="spacer"></div>
+  <button id="btnPreset">load preset</button>
+  <button id="btnUpload">open chain…</button>
+  <button id="btnDownload" class="primary">download chain.json</button>
+  <span id="stamp"></span>
+</div>
+<input type="file" id="fileJson" accept=".json" hidden>
+<div id="err"></div>
+
+<div id="grid">
+  <section>
+    <h1>Component library</h1>
+    <div id="lib"></div>
+  </section>
+
+  <section>
+    <h1>Signal chain</h1>
+    <div id="stages"></div>
+  </section>
+
+  <section>
+    <h1>Noise budget</h1>
+    <div class="ctl"><label>reference plane</label><select id="plane"></select></div>
+    <div class="ctl"><label>carrier (GHz)</label><input id="carrier" value="1.5"></div>
+    <div class="ctl"><label>spectral offset (kHz)</label><input id="spectral" value="1"></div>
+    <h2>Units</h2>
+    <div class="seg" id="unit">
+      <button data-u="contribution_dBm_per_hz" class="on">dBm/Hz</button>
+      <button data-u="contribution_w_per_hz">W/Hz</button>
+      <button data-u="contribution_K">K</button>
+    </div>
+    <div class="tot" id="totals"></div>
+    <table><thead><tr>
+      <th>source</th><th id="uh">dBm/Hz</th><th>referral dB</th><th>share</th><th></th>
+    </tr></thead><tbody id="rows"></tbody></table>
+  </section>
+
+  <div id="plots">
+    <div class="plot">
+      <div class="cap">total gain vs carrier frequency</div>
+      <div class="ctl"><label>span (GHz)</label>
+        <span style="display:flex;gap:5px">
+          <input id="g0" value="0.1"><input id="g1" value="3.0"></span></div>
+      <div id="pgain"></div>
+    </div>
+    <div class="plot">
+      <div class="cap">output-referred noise vs spectral offset</div>
+      <div class="ctl"><label>span (kHz)</label>
+        <span style="display:flex;gap:5px">
+          <input id="n0" value="0.1"><input id="n1" value="1000"></span></div>
+      <div class="ctl"><label>per-source breakdown</label>
+        <button id="btnContrib">off</button></div>
+      <div id="pnoise"></div>
+    </div>
+  </div>
+</div>
+
+<script>/*__UPLOT_JS__*/</script>
+<script>
+"use strict";
+const CONFIG = /*__CONFIG__*/;
+const WHEEL_B64 = "/*__WHEEL_B64__*/";
+
+/* ===================== the Python bridge =====================
+   Everything crosses this boundary as a JSON string. That is deliberate: no
+   PyProxy objects escape into JS, so there is nothing to leak and nothing to
+   keep alive, and the view cannot accidentally hold a reference to a live
+   Python object it might then mutate.
+
+   `call` is the ONLY way this page obtains a number. There is no chain model
+   in JavaScript and no arithmetic on results - a unit change selects a
+   different column that Python already computed. So there is no second
+   implementation to drift: the page runs the same wheel a notebook installs,
+   at the version stamped in the top bar.
+
+   That guarantees the same *code*, not the same *dependency versions*. The
+   wheel asks for numpy>=1.22 / scipy>=1.8 and Pyodide supplies whatever it
+   ships, which is why those versions are stamped too. Measured against a
+   local numpy 2.3.5 / scipy 1.16.3: components with an analytic model agree
+   bit for bit, while the AD9082 DAC - whose phase noise comes from a
+   scipy curve_fit - lands 0.06% apart, because the fit converges slightly
+   differently. Physically negligible, but it is a real difference and the
+   stamp is what lets someone notice it.                                    */
+const BRIDGE_PY = `
+import json
+import chain_api
+
+def _call(name, args_json):
+    fn = getattr(chain_api, name, None)
+    if fn is None:
+        return json.dumps({"ok": False, "error": "no API function %r" % name})
+    try:
+        return json.dumps(fn(*json.loads(args_json)))
+    except Exception as exc:
+        return json.dumps({"ok": False, "error": "%s: %s" % (type(exc).__name__, exc)})
+`;
+
+let _call = null;
+
+function call(fn, ...args){
+  if (!_call) throw new Error('Python is not ready yet');
+  const parsed = JSON.parse(_call(fn, JSON.stringify(args)));
+  if (!parsed.ok) throw new Error(parsed.error);
+  return parsed;
+}
+
+/* ===================== state (view only) =====================
+   CHAIN mirrors what Python last reported so the DOM can be rebuilt without a
+   round trip. It is never the source of truth and is never edited in place -
+   every mutation goes through `call` and replaces this wholesale.            */
+let CHAIN = null, CATALOG = null;
+let selected = null;          // component_index of the open stage editor
+let unitCol = 'contribution_dBm_per_hz';
+let showContrib = false;
+let gainPlot = null, noisePlot = null;
+
+const $ = id => document.getElementById(id);
+const num = v => Number(String(v).trim());
+
+function showError(msg){
+  const box = $('err');
+  box.textContent = msg;
+  box.style.display = 'block';
+  clearTimeout(showError._t);
+  showError._t = setTimeout(() => { box.style.display = 'none'; }, 9000);
+}
+
+/* Any handler that talks to Python funnels through here, so one bad parameter
+   shows a message instead of leaving the page half-updated. */
+function guard(fn){
+  return (...args) => {
+    try { fn(...args); }
+    catch (err){ showError(err.message || String(err)); }
+  };
+}
+
+/* ===================== boot ===================== */
+async function boot(){
+  const msg = $('bootmsg'), note = $('bootnote');
+  note.textContent = CONFIG.offline
+    ? 'Everything is embedded in this file; nothing is downloaded.'
+    : 'Fetching the Python runtime once, then it is cached by the browser.';
+  try {
+    msg.textContent = 'loading Python runtime…';
+    const pyodide = await loadPyodide({indexURL: CONFIG.pyodide_index});
+
+    msg.textContent = 'loading numpy + scipy…';
+    await pyodide.loadPackage(['numpy', 'scipy', 'micropip']);
+
+    msg.textContent = 'installing analog-chain-core…';
+    const bytes = Uint8Array.from(atob(WHEEL_B64), c => c.charCodeAt(0));
+    pyodide.FS.writeFile('/tmp/' + CONFIG.wheel_name, bytes);
+    const micropip = pyodide.pyimport('micropip');
+    await micropip.install('emfs:///tmp/' + CONFIG.wheel_name);
+
+    msg.textContent = 'starting the chain API…';
+    pyodide.runPython(BRIDGE_PY);
+    _call = pyodide.globals.get('_call');
+
+    const prov = call('provenance');
+    $('stamp').innerHTML =
+      `analog-chain-core ${prov.analog_chain_core || '?'} &middot; ${prov.n_registered} components<br>` +
+      `python ${prov.python} &middot; numpy ${prov.numpy} &middot; scipy ${prov.scipy || '—'}<br>` +
+      `built ${CONFIG.built_at} &middot; ${CONFIG.git_sha}`;
+
+    CATALOG = call('catalog');
+    renderLibrary();
+    CHAIN = call('load_preset', CONFIG.default_preset);
+    renderAll();
+    $('boot').style.display = 'none';
+  } catch (err){
+    msg.textContent = 'failed to start';
+    note.style.color = 'var(--bad)';
+    note.textContent = err.message || String(err);
+    console.error(err);
+  }
+}
+
+/* ===================== component library ===================== */
+function renderLibrary(){
+  const host = $('lib');
+  host.innerHTML = '';
+  for (const group of CATALOG.categories){
+    const box = document.createElement('div');
+    box.className = 'cat';
+    const head = document.createElement('div');
+    head.className = 'h';
+    head.textContent = group.category;
+    box.appendChild(head);
+    for (const item of group.components){
+      const btn = document.createElement('button');
+      btn.className = 'lib';
+      btn.textContent = item.label;
+      btn.title = item.doc || item.type_id;
+      btn.onclick = guard(() => {
+        // Defaults come from the registry, so an added component is always
+        // constructible; the user edits it afterwards in the stage panel.
+        const params = {};
+        for (const spec of item.params)
+          if (spec.default !== null) params[spec.name] = spec.default;
+        CHAIN = call('add_component', item.type_id, params, null);
+        selected = CHAIN.n_components - 1;
+        renderAll();
+      });
+      box.appendChild(btn);
+    }
+    host.appendChild(box);
+  }
+}
+
+function specsFor(typeId){
+  for (const group of CATALOG.categories)
+    for (const item of group.components)
+      if (item.type_id === typeId) return item;
+  return null;
+}
+
+/* ===================== chain view ===================== */
+function renderStages(){
+  const host = $('stages');
+  host.innerHTML = '';
+  $('chainname').textContent = CHAIN.name;
+
+  for (const stage of CHAIN.stages){
+    const card = document.createElement('div');
+    card.className = 'stage' + (stage.component_index === selected && selected !== null ? ' sel' : '');
+
+    const head = document.createElement('div');
+    head.className = 'hd';
+    head.innerHTML =
+      `<span class="idx">${stage.stage_index}</span>` +
+      `<span class="lbl"></span><span class="kind ${stage.kind}">${stage.kind}</span>` +
+      `<span class="sp"></span>`;
+    head.querySelector('.lbl').textContent = stage.label;
+    head.onclick = () => {
+      // Converters have no component_index - they are set as the digitizer,
+      // not appended, so they are shown but not editable here.
+      selected = (stage.component_index === null || stage.component_index === selected)
+        ? null : stage.component_index;
+      renderStages();
+    };
+    card.appendChild(head);
+
+    if (stage.component_index !== null){
+      const del = document.createElement('button');
+      del.textContent = '×';
+      del.title = 'remove';
+      del.style.padding = '1px 7px';
+      del.onclick = guard(ev => {
+        ev.stopPropagation();
+        CHAIN = call('remove_component', stage.component_index);
+        selected = null;
+        renderAll();
+      });
+      head.appendChild(del);
+    }
+
+    const spec = specsFor(stage.type_id);
+    const body = document.createElement('div');
+    body.className = 'body';
+    if (spec && spec.doc){
+      const doc = document.createElement('p');
+      doc.className = 'doc';
+      doc.textContent = spec.doc.split('\n')[0];
+      body.appendChild(doc);
+    }
+    if (spec && spec.params.length){
+      for (const ps of spec.params){
+        const row = document.createElement('div');
+        row.className = 'prow';
+        const lab = document.createElement('label');
+        lab.innerHTML = `${ps.label} <span class="u">${ps.unit}</span>`;
+        lab.title = ps.help || '';
+        const input = document.createElement('input');
+        input.value = stage.params[ps.name] ?? ps.default ?? '';
+        if (ps.minimum !== null) input.min = ps.minimum;
+        if (ps.maximum !== null) input.max = ps.maximum;
+        // Committed on change, not on every keystroke: each edit rebuilds the
+        // component in Python, which re-runs its interpolator setup.
+        input.onchange = guard(() => {
+          const value = ps.kind === 'float' ? num(input.value)
+                      : ps.kind === 'int' ? parseInt(input.value, 10)
+                      : input.value;
+          CHAIN = call('set_param', stage.component_index, ps.name, value);
+          renderAll();
+        });
+        row.append(lab, input);
+        body.appendChild(row);
+      }
+    } else {
+      const none = document.createElement('p');
+      none.className = 'doc';
+      none.textContent = 'No adjustable parameters — this model is fixed by its datasheet.';
+      body.appendChild(none);
+    }
+    card.appendChild(body);
+    host.appendChild(card);
+  }
+}
+
+/* ===================== budget ===================== */
+function renderPlanes(){
+  const sel = $('plane');
+  const previous = sel.value;
+  sel.innerHTML = '';
+  for (const plane of CHAIN.planes){
+    const opt = document.createElement('option');
+    opt.value = JSON.stringify([plane.reference, plane.at]);
+    opt.textContent = plane.display;
+    sel.appendChild(opt);
+  }
+  // Keep the user's plane across an edit when it still exists.
+  const match = [...sel.options].some(o => o.value === previous);
+  if (match) sel.value = previous;
+  else {
+    const lna = [...sel.options].find(o => /\(input\)/.test(o.textContent)
+                                       && /lna/i.test(o.textContent));
+    sel.value = lna ? lna.value : sel.options[0].value;
+  }
+}
+
+function fmt(value, col){
+  if (value === null || value === undefined) return '—';
+  if (col === 'contribution_w_per_hz' || col === 'intrinsic_w_per_hz')
+    return value.toExponential(3);
+  if (col === 'contribution_K') return value.toPrecision(4);
+  return value.toFixed(2);
+}
+
+function renderBudget(){
+  const [reference, at] = JSON.parse($('plane').value);
+  const carrier = num($('carrier').value) * 1e9;
+  const spectral = num($('spectral').value) * 1e3;
+  const result = call('budget', reference, at, carrier, spectral);
+
+  $('totals').innerHTML =
+    `<span>referred to <b>${result.reference}</b></span>` +
+    `<span>total <b>${result.total_dbm_per_hz.toFixed(2)}</b> dBm/Hz</span>` +
+    `<span><b>${result.total_k.toPrecision(4)}</b> K</span>` +
+    `<span>dominant <b>${result.dominant || '—'}</b></span>`;
+
+  const unitLabel = {contribution_dBm_per_hz:'dBm/Hz', contribution_w_per_hz:'W/Hz',
+                     contribution_K:'K'}[unitCol];
+  $('uh').textContent = unitLabel;
+
+  const body = $('rows');
+  body.innerHTML = '';
+  for (const row of result.rows){
+    const tr = document.createElement('tr');
+    if (row.source === result.dominant) tr.className = 'dom';
+    const share = row.fraction_of_total === null ? 0 : row.fraction_of_total;
+    tr.innerHTML =
+      `<td></td><td>${fmt(row[unitCol], unitCol)}</td>` +
+      `<td>${fmt(row.referral_gain_dB, 'db')}</td>` +
+      `<td>${(share * 100).toFixed(1)}%</td>` +
+      `<td style="width:56px"><div class="bar" style="width:${Math.max(1, share * 100)}%"></div></td>`;
+    tr.firstChild.textContent = row.source;
+    tr.firstChild.title = `${row.kind} · referred from ${row.referred_from}`;
+    body.appendChild(tr);
+  }
+}
+
+/* ===================== plots ===================== */
+const AXIS = {stroke:'#6b7382', grid:{stroke:'#262a32', width:1},
+              ticks:{stroke:'#31363f'}, font:'10px ui-monospace,monospace'};
+const SERIES_COLORS = ['#d9a441','#6f9ceb','#68c2a3','#e0655f','#b78bd8',
+                       '#dba36a','#7fc4d8','#c9d06a'];
+
+function plotSize(hostId){
+  const host = $(hostId);
+  return {width: Math.max(260, host.clientWidth || 420), height: 216};
+}
+
+function renderGain(){
+  const start = num($('g0').value) * 1e9, stop = num($('g1').value) * 1e9;
+  const result = call('sweep_gain', start, stop, 401, false);
+  const ghz = result.freq_hz.map(f => f / 1e9);   // axis label only, not a result
+  const data = [ghz, result.gain_db];
+  const opts = {
+    ...plotSize('pgain'),
+    padding: [8, 10, 0, 0],
+    scales: {x: {time: false}},
+    axes: [{...AXIS, label:'carrier (GHz)', labelSize: 20},
+           {...AXIS, label:'gain (dB)', labelSize: 26}],
+    series: [{label:'GHz'},
+             {label:'total gain', stroke:'#d9a441', width:1.6, value:(u,v)=>v==null?'—':v.toFixed(2)}],
+    legend: {show: true},
+  };
+  if (gainPlot){ gainPlot.destroy(); gainPlot = null; }
+  gainPlot = new uPlot(opts, data, $('pgain'));
+}
+
+function renderNoise(){
+  const carrier = num($('carrier').value) * 1e9;
+  const start = num($('n0').value) * 1e3, stop = num($('n1').value) * 1e3;
+  const result = call('sweep_noise', carrier, start, stop, 121, true, showContrib);
+
+  const khz = result.spectral_hz.map(f => f / 1e3);
+  const data = [khz, result.total_dbm_per_hz];
+  const series = [{label:'kHz'},
+                  {label:'total', stroke:'#d9a441', width:1.8,
+                   value:(u,v)=>v==null?'—':v.toFixed(1)}];
+  result.series.forEach((s, i) => {
+    data.push(s.dbm_per_hz);
+    series.push({label: s.label, stroke: SERIES_COLORS[(i + 1) % SERIES_COLORS.length],
+                 width: 1, dash: [3, 2],
+                 value: (u, v) => v == null ? '—' : v.toFixed(1)});
+  });
+
+  const opts = {
+    ...plotSize('pnoise'),
+    padding: [8, 10, 0, 0],
+    scales: {x: {time: false, distr: 3}},          // log spectral axis
+    axes: [{...AXIS, label:'spectral offset (kHz)', labelSize: 20},
+           {...AXIS, label:'dBm/Hz', labelSize: 26}],
+    series,
+    legend: {show: true},
+  };
+  if (noisePlot){ noisePlot.destroy(); noisePlot = null; }
+  noisePlot = new uPlot(opts, data, $('pnoise'));
+}
+
+/* ===================== orchestration ===================== */
+function renderAll(){
+  renderStages();
+  renderPlanes();
+  renderAnalysis();
+}
+function renderAnalysis(){
+  renderBudget();
+  renderGain();
+  renderNoise();
+}
+
+/* ===================== wiring ===================== */
+$('plane').onchange = guard(renderBudget);
+$('carrier').onchange = guard(() => { renderBudget(); renderNoise(); });
+$('spectral').onchange = guard(renderBudget);
+$('g0').onchange = $('g1').onchange = guard(renderGain);
+$('n0').onchange = $('n1').onchange = guard(renderNoise);
+
+for (const btn of document.querySelectorAll('#unit button'))
+  btn.onclick = guard(() => {
+    unitCol = btn.dataset.u;
+    for (const other of document.querySelectorAll('#unit button'))
+      other.classList.toggle('on', other === btn);
+    renderBudget();
+  });
+
+$('btnContrib').onclick = guard(() => {
+  showContrib = !showContrib;
+  $('btnContrib').textContent = showContrib ? 'on' : 'off';
+  $('btnContrib').classList.toggle('on', showContrib);
+  renderNoise();
+});
+
+$('btnPreset').onclick = guard(() => {
+  CHAIN = call('load_preset', CONFIG.default_preset);
+  selected = null;
+  renderAll();
+});
+
+/* The chain file this hands back is SignalChain.to_dict() output, so it
+   reloads with SignalChain.load() in a notebook with no translation. */
+$('btnDownload').onclick = guard(() => {
+  const result = call('to_json', 2);
+  const url = URL.createObjectURL(new Blob([result.json], {type: 'application/json'}));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = result.suggested_filename;
+  link.click();
+  URL.revokeObjectURL(url);
+});
+
+$('btnUpload').onclick = () => $('fileJson').click();
+$('fileJson').onchange = async ev => {
+  const file = ev.target.files[0];
+  if (!file) return;
+  try {
+    CHAIN = call('from_json', await file.text());
+    selected = null;
+    renderAll();
+  } catch (err){ showError('could not load that chain file — ' + err.message); }
+  ev.target.value = '';
+};
+
+addEventListener('resize', () => {
+  clearTimeout(addEventListener._t);
+  addEventListener._t = setTimeout(() => {
+    if (gainPlot) gainPlot.setSize(plotSize('pgain'));
+    if (noisePlot) noisePlot.setSize(plotSize('pnoise'));
+  }, 120);
+});
+
+boot();
+</script>
+</body>
+</html>

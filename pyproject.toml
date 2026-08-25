@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "analog-chain-core"
+version = "0.1.0"
+description = "RF signal chain gain and noise modelling"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+dependencies = ["numpy>=1.22", "scipy>=1.8"]
+
+[project.urls]
+Homepage = "https://github.com/t0/analog_chain_interface"
+
+# Explicit module list, which also switches off setuptools' auto-discovery.
+#
+# The physics core plus chain_api, and nothing else: gui_components/ is Qt,
+# diagram_generator imports matplotlib at module scope, chain_builder_gui is an
+# entry point, and analog_chains/ is legacy code importing an absent hidfmux.
+# None of those can be imported under Pyodide, and the browser build needs
+# every module in this wheel to import cleanly.
+#
+# These are top-level modules rather than a package because that is how the
+# existing code imports them (`import registry`, `from utils import kb`).
+# Packaging them as `analog_chain.registry` would mean rewriting those imports
+# across the whole repo and invalidating every saved chain file's module paths,
+# which is a separate change from getting the browser build working.
+[tool.setuptools]
+py-modules = [
+    "component",
+    "registry",
+    "utils",
+    "noise_budget",
+    "signal_chain",
+    "hardware_models",
+    "chain_api",
+]
