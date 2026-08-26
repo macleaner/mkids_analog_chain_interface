@@ -357,13 +357,20 @@ def sweep_gain(start_hz: float, stop_hz: float, n: int = 401,
 @_guard
 def sweep_noise(carrier_hz: float, start_hz: float, stop_hz: float,
                 n: int = 201, log: bool = True,
-                contributions: bool = False) -> Dict[str, Any]:
+                contributions: bool = False,
+                reference: Any = None, at: str = "output") -> Dict[str, Any]:
     """
-    Output-referred noise PSD over a spectral-frequency sweep.
+    Noise PSD referred to one plane, over a spectral-frequency sweep.
+
+    ``reference``/``at`` name the plane exactly as :func:`budget` does; with
+    ``reference`` left as None the sweep is referred to the chain output, after
+    the ADC. This is the same decomposition the budget table shows at a single
+    spectral frequency, evaluated across a sweep instead - one
+    ``SignalChain.noise_budget`` call over a spectral array, so a curve here and
+    a row there at the same offset are the same number.
 
     With ``contributions`` the per-source breakdown comes back as well, each
-    already referred to the output - the same decomposition the budget table
-    shows at a single spectral frequency, evaluated across the sweep.
+    already referred to that plane.
 
     Both W/Hz and dBm/Hz are returned. The conversion is trivial, but doing it
     here rather than in the view keeps every number the browser plots a number
@@ -371,17 +378,20 @@ def sweep_noise(carrier_hz: float, start_hz: float, stop_hz: float,
     """
     spectral = _grid(float(start_hz), float(stop_hz), n, bool(log))
     carrier = float(carrier_hz)
-    total = np.asarray(_CHAIN.output_noise(carrier, spectral), dtype=float)
-    if total.ndim == 0:
-        total = np.full_like(spectral, float(total))
+    # One budget for the whole sweep: every model broadcasts over the spectral
+    # axis, so the total and the contributions come back already shaped like it.
+    if reference is None:
+        result = _CHAIN.output_budget(carrier, spectral)
+    else:
+        result = _CHAIN.noise_budget(reference, carrier, spectral, at=at)
+    # An empty budget totals a scalar 0.0; broadcast so the axis stays paired.
+    total = np.broadcast_to(
+        np.asarray(result.total_w, dtype=float), spectral.shape)
 
     series = []
     if contributions:
-        # One budget for the whole sweep: every model broadcasts over the
-        # spectral axis, so the contributions come back already shaped like it.
         # NoiseBudget ranks them by peak, which is the order the budget table
         # shows, so the plot legend and the table agree without sorting here.
-        result = _CHAIN.output_budget(carrier, spectral)
         for contribution in result.contributions:
             # A source that is flat in spectral frequency may still come back
             # scalar; broadcast so every series is the length of the axis.
@@ -391,7 +401,8 @@ def sweep_noise(carrier_hz: float, start_hz: float, stop_hz: float,
                            "w_per_hz": _arr(watts),
                            "dbm_per_hz": _arr(to_dbm(watts))})
 
-    return {"carrier_hz": _num(carrier), "spectral_hz": _arr(spectral),
+    return {"carrier_hz": _num(carrier), "reference": result.reference,
+            "spectral_hz": _arr(spectral),
             "total_w_per_hz": _arr(total),
             "total_dbm_per_hz": _arr(to_dbm(total)),
             "series": series}

@@ -109,6 +109,37 @@ def test_sweep_gain_matches_total_gain():
     assert result["gain_db"] == pytest.approx(list(expected), rel=1e-12)
 
 
+def test_referred_noise_sweep_matches_the_budget_at_that_offset():
+    """
+    The plot and the table are the same decomposition, one swept and one at a
+    single offset. Referred to the same plane they must agree exactly, or the
+    curve a user reads off the plot is not the number the budget reports.
+    """
+    swept = chain_api.sweep_noise(CARRIER, 1e0, SPECTRAL, 5, True, True,
+                                  "LNA", "input")
+    assert swept["ok"], swept.get("error")
+    table = chain_api.budget("LNA", "input", CARRIER, SPECTRAL)
+
+    assert swept["reference"] == table["reference"] == "LNA (input)"
+    # The sweep ends on SPECTRAL, so its last point is the table's column.
+    assert swept["total_w_per_hz"][-1] == pytest.approx(
+        table["total_w_per_hz"], rel=1e-12)
+
+    by_source = {row["source"]: row for row in table["rows"]}
+    for entry in swept["series"]:
+        assert entry["w_per_hz"][-1] == pytest.approx(
+            by_source[entry["label"]]["contribution_w_per_hz"], rel=1e-12)
+
+
+def test_noise_sweep_defaults_to_the_chain_output():
+    """No reference means the output, as it did before planes were selectable."""
+    result = chain_api.sweep_noise(CARRIER, 1e2, 1e5, 13, True, False)
+    assert result["reference"] == "chain output"
+    expected = chain_api._CHAIN.output_noise(
+        CARRIER, np.logspace(2, 5, 13))
+    assert result["total_w_per_hz"] == pytest.approx(list(expected), rel=1e-12)
+
+
 def test_noise_sweep_units_are_consistent():
     """dBm/Hz is reported alongside W/Hz so the view never converts. Check the
     two columns describe the same numbers."""

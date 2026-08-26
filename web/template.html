@@ -165,10 +165,11 @@ tr.dom td{color:var(--accent)}
       <div id="pgain"></div>
     </div>
     <div class="plot">
-      <div class="cap">output-referred noise vs spectral offset</div>
-      <div class="ctl"><label>span (kHz)</label>
+      <div class="cap" id="ncap">noise vs spectral offset</div>
+      <div class="ctl"><label>reference plane</label><select id="nplane"></select></div>
+      <div class="ctl"><label>span (Hz)</label>
         <span style="display:flex;gap:5px">
-          <input id="n0" value="0.1"><input id="n1" value="1000"></span></div>
+          <input id="n0" value="0.01"><input id="n1" value="1000"></span></div>
       <div class="ctl"><label>per-source breakdown</label>
         <button id="btnContrib">off</button></div>
       <div id="pnoise"></div>
@@ -420,10 +421,23 @@ function renderStages(){
 }
 
 /* ===================== budget ===================== */
-function renderPlanes(){
-  const sel = $('plane');
+/* The budget table and the noise plot both refer to a plane and both offer the
+   same list, so they are filled from one function. An option's value is the
+   [reference, at] pair the Python side takes, JSON-encoded; the plot carries
+   one extra option whose value is `null`, the chain output after the ADC, which
+   is what `sweep_noise` computes when given no reference.
+
+   Returns false if the previously chosen plane is gone, so the caller can pick
+   its own fallback - the table wants the LNA input, the plot wants the output. */
+function fillPlanes(sel, outputLabel){
   const previous = sel.value;
   sel.innerHTML = '';
+  if (outputLabel){
+    const opt = document.createElement('option');
+    opt.value = 'null';
+    opt.textContent = outputLabel;
+    sel.appendChild(opt);
+  }
   for (const plane of CHAIN.planes){
     const opt = document.createElement('option');
     opt.value = JSON.stringify([plane.reference, plane.at]);
@@ -431,13 +445,19 @@ function renderPlanes(){
     sel.appendChild(opt);
   }
   // Keep the user's plane across an edit when it still exists.
-  const match = [...sel.options].some(o => o.value === previous);
-  if (match) sel.value = previous;
-  else {
-    const lna = [...sel.options].find(o => /\(input\)/.test(o.textContent)
-                                       && /lna/i.test(o.textContent));
-    sel.value = lna ? lna.value : sel.options[0].value;
+  if (![...sel.options].some(o => o.value === previous)) return false;
+  sel.value = previous;
+  return true;
+}
+
+function renderPlanes(){
+  const table = $('plane');
+  if (!fillPlanes(table, null)){
+    const lna = [...table.options].find(o => /\(input\)/.test(o.textContent)
+                                          && /lna/i.test(o.textContent));
+    table.value = lna ? lna.value : (table.options[0] ? table.options[0].value : '');
   }
+  if (!fillPlanes($('nplane'), 'chain output (after ADC)')) $('nplane').value = 'null';
 }
 
 function fmt(value, col){
@@ -513,12 +533,16 @@ function renderGain(){
 
 function renderNoise(){
   const carrier = num($('carrier').value) * 1e9;
-  const start = num($('n0').value) * 1e3, stop = num($('n1').value) * 1e3;
-  const result = call('sweep_noise', carrier, start, stop, 121, true, showContrib);
+  const start = num($('n0').value), stop = num($('n1').value);
+  // null here is the plot's "chain output" option; anything else is the same
+  // [reference, at] pair the budget table sends.
+  const plane = JSON.parse($('nplane').value || 'null');
+  const result = call('sweep_noise', carrier, start, stop, 121, true, showContrib,
+                      plane ? plane[0] : null, plane ? plane[1] : 'output');
+  $('ncap').textContent = `noise referred to ${result.reference} vs spectral offset`;
 
-  const khz = result.spectral_hz.map(f => f / 1e3);
-  const data = [khz, result.total_dbm_per_hz];
-  const series = [{label:'kHz'},
+  const data = [result.spectral_hz, result.total_dbm_per_hz];
+  const series = [{label:'Hz'},
                   {label:'total', stroke:'#d9a441', width:1.8,
                    value:(u,v)=>v==null?'—':v.toFixed(1)}];
   result.series.forEach((s, i) => {
@@ -532,7 +556,7 @@ function renderNoise(){
     ...plotSize('pnoise'),
     padding: [8, 10, 0, 0],
     scales: {x: {time: false, distr: 3}},          // log spectral axis
-    axes: [{...AXIS, label:'spectral offset (kHz)', labelSize: 20},
+    axes: [{...AXIS, label:'spectral offset (Hz)', labelSize: 20},
            {...AXIS, label:'dBm/Hz', labelSize: 26}],
     series,
     legend: {show: true},
@@ -558,7 +582,7 @@ $('plane').onchange = guard(renderBudget);
 $('carrier').onchange = guard(() => { renderBudget(); renderNoise(); });
 $('spectral').onchange = guard(renderBudget);
 $('g0').onchange = $('g1').onchange = guard(renderGain);
-$('n0').onchange = $('n1').onchange = guard(renderNoise);
+$('n0').onchange = $('n1').onchange = $('nplane').onchange = guard(renderNoise);
 
 for (const btn of document.querySelectorAll('#unit button'))
   btn.onclick = guard(() => {
