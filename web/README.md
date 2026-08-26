@@ -11,6 +11,20 @@ the noise budget — runs from the same wheel a notebook installs with
 results; a unit change picks a different column that Python already computed.
 So there is no second implementation to keep in sync.
 
+## Open it
+
+```bash
+./open_web_gui.py
+```
+
+Builds whichever stages are out of date, then opens the page in your browser.
+This is the one to use if you just want the calculator; the two stages below are
+for when you care which of them ran.
+
+`./open_web_gui.py --desktop` writes `~/.local/share/applications/analog-chain-calculator.desktop`,
+after which the calculator is double-clickable and appears in the applications
+menu. That file holds absolute paths, so it is generated rather than committed.
+
 ## Build
 
 ```bash
@@ -27,6 +41,10 @@ Rebuild only what you touched:
 | `web/template.html` (UI) | `assemble_web.py` alone |
 | any core module or `chain_api.py` | wheel, then `assemble_web.py` |
 | `web/vendor/*` | `assemble_web.py` alone |
+
+`open_web_gui.py` decides that from mtimes, and takes the wheel's own contents
+as the list of sources for it — so adding a module to `py-modules` in
+`pyproject.toml` does not also have to be recorded in the launcher.
 
 ## How assembly works
 

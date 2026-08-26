@@ -65,6 +65,21 @@ No installation required - the tool is self-contained in the `/home/maclean/code
 
 ## Usage
 
+### Browser GUI
+
+The quickest way in — no server, no install beyond this repo:
+
+```bash
+./open_web_gui.py
+```
+
+It builds the single-file browser calculator if anything it depends on has
+changed, then opens it. Everything in the page is computed by the same core
+modules a notebook imports; see [`web/README.md`](web/README.md) for how, and
+`./open_web_gui.py --desktop` to make it double-clickable from your applications
+menu. The page fetches its Python runtime from a CDN the first time it is
+opened, and is cached after that.
+
 ### Basic Example
 
 ```python
@@ -419,6 +434,7 @@ analog_chain_interface/
 ├── utils.py                   # Utility functions
 ├── diagram_generator.py       # Visualization
 ├── chain_api.py               # JSON facade (drives the browser GUI)
+├── open_web_gui.py            # Build if stale, then open the browser GUI
 ├── examples/
 │   ├── analog_chain_walkthrough.ipynb   # Guided notebook tour
 │   ├── simple_cryogenic_system.json     # Example chain file
