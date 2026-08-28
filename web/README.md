@@ -100,6 +100,7 @@ converters. From there:
 
 | To | Use |
 |---|---|
+| see what a component is before adding it | click it once in the library — its specs appear in **Model specs**, at the foot of that column |
 | add a stage | double-click it in the component library, left column |
 | edit a stage | click it — the card opens with its parameters |
 | name a stage | the `label` field in that card — this is what a budget refers to and what the file records |
@@ -109,6 +110,7 @@ converters. From there:
 | set the DAC carrier power | click the **DAC stage** (stage 0) — `Carrier Power` and `Gain` are in its card, like any other stage's parameters |
 | remove an endpoint | its `×`, or its select back to *— none —* |
 | name the chain, or annotate it | click the chain name in the top bar |
+| see what any of that saves as | the **Chain file** tab, right-hand column |
 
 A stage row says what the stage is called, what model it is, and the values
 that separate it from another stage of the same model — the three things you
@@ -142,6 +144,41 @@ to — the table says so instead of erroring, and the sweeps return zero gain an
 zero noise. Nothing is autosaved: **new chain** discards what is on screen, so
 download first.
 
+### Model specs
+
+Clicking a library entry describes it in the panel at the foot of that column,
+without touching the chain: the registry's docstring, the gain curve, the gain
+range and the value at the carrier, and what the model contributes as noise.
+
+`component_specs` builds the component, asks it and drops it, so the figures are
+the ones the chain will use — a component cannot read one way in the panel and
+behave another way once added. Two things it decides rather than leaving to the
+view:
+
+* **the band.** The sweep runs over the carrier range the model is valid over,
+  found by asking it. A filter declares that range outright, because it answers
+  with a number everywhere — past the last tabulated point it extends the
+  endpoint slope, clamped so it can neither show gain nor claim rejection deeper
+  than anything measured. A model that instead returns NaN outside its tabulated
+  range is making the same statement the other way, and gets bisected for its
+  edge. Either way the span is the datasheet's: `VLF-6700+` is drawn over
+  50 MHz – 19.89 GHz and `VHF-1320+` over 1 MHz – 3.7 GHz, without either being
+  written down here or any interpolator's knots being read by name. A model that
+  answers everywhere and declares no band — a flat attenuator, a cable built to
+  extrapolate — has none of its own, so the gain plot's span is used instead and
+  the axis says `plot span`, because "0.1–3 GHz" means something different in the
+  two cases.
+* **the unit for its noise.** A noise temperature only means anything for a
+  source that is white near the carrier, so the model is evaluated across the
+  spectral axis: an amplifier or a warm attenuator gets one temperature in K,
+  the AD9082's phase-noise skirt gets a density at the offset the budget is set
+  to, and a filter — lossy, but not a source — reads `none`.
+
+The carrier and the spectral offset are the budget's, so a spec is read at the
+operating point being worked at. The figures are for the registry defaults,
+which is what a double-click installs; the `at defaults` row says which values
+those were, for the models where it makes a difference.
+
 ### The record
 
 Clicking the chain name opens `name`, `description` and `metadata`. None of
@@ -159,6 +196,28 @@ on the edit that caused it rather than on a download months later.
 
 The name is also what the download is called, so it is sanitized into a
 filename: `Cooldown 12/A` gives `cooldown_12_a.json`, never a path.
+
+### Seeing the file
+
+The right-hand column tabs between **Noise budget** and **Chain file**. The
+second is the chain as it would be saved — read-only, rewritten after every
+edit, with the filename it would download as and its size on disk above it.
+Adding a stage, reordering one, renaming it, editing a parameter, or filling in
+the record all show up there as they happen, so what a chain object *is* is
+visible while it is being built rather than only after downloading one and
+opening it in an editor.
+
+It is a view of the file, not a description of it. The panel calls the same
+`to_json` the download button calls, so it is `SignalChain.to_dict()` output
+and cannot disagree with what gets written; the `describe()` payload the rest
+of the page draws from is shaped for the view and is *not* the file, so
+rendering the file from that would be a second serializer to keep in step with
+the first. It is printed with `textContent` and `white-space: pre`, so what is
+on screen is byte for byte what lands on disk — no highlighter deciding where a
+token ends, and no wrapped line pretending to be an indent level.
+
+Only the visible tab costs a round trip: edits made with the budget up are
+picked up when you switch back, not recomputed into a hidden panel.
 
 ## Same code, not the same dependency versions
 

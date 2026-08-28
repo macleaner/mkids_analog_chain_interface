@@ -25,6 +25,7 @@ import zipfile
 ROOT = os.path.dirname(os.path.abspath(__file__))
 DIST = os.path.join(ROOT, 'dist')
 PAGE = os.path.join(DIST, 'analog_chain_calculator.html')
+ICON = os.path.join(ROOT, 'web', 'icon.svg')
 
 # Sources for the assembly stage. The wheel is added at run time, since its
 # filename carries the version.
@@ -113,6 +114,7 @@ def install_desktop_entry():
                  'Comment=RF signal chain gain and noise calculator\n'
                  f'Exec={sys.executable} {os.path.join(ROOT, os.path.basename(__file__))}\n'
                  f'Path={ROOT}\n'
+                 f'Icon={ICON}\n'
                  'Terminal=false\n'
                  'Categories=Science;Engineering;\n')
     os.chmod(path, 0o755)

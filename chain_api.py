@@ -36,10 +36,10 @@ import numpy as np
 import registry
 from component import ADCComponent, DACComponent
 from signal_chain import SignalChain
-from utils import to_dbm
+from utils import kb, to_dbm
 
 __all__ = [
-    "catalog", "presets", "load_preset", "new_chain", "describe",
+    "catalog", "component_specs", "presets", "load_preset", "new_chain", "describe",
     "add_component", "remove_component", "move_component",
     "set_param", "set_label",
     "set_digitizer", "set_digitizer_param",
@@ -145,6 +145,189 @@ def catalog() -> Dict[str, Any]:
             })
         categories.append({"category": category, "components": items})
     return {"categories": categories}
+
+
+# --------------------------------------------------------------------------
+# component specs - what one model says about itself, outside any chain
+# --------------------------------------------------------------------------
+# Carrier frequencies used to ask a model where it is defined. Log spaced,
+# because the library spans DC to tens of GHz, with 0 Hz prepended so a model
+# tabulated from DC reports DC rather than whatever the lowest probe happened
+# to be.
+_PROBE_HZ = np.concatenate(([0.0], np.logspace(4, np.log10(4e10), 481)))
+
+# Spectral offsets used to tell a source that is white near the carrier from one
+# with a skirt. Wide enough to catch DAC phase noise, which falls ~10 dB/decade.
+_NOISE_OFFSETS_HZ = np.logspace(-2, 6, 9)
+
+
+def _gain_curve(component, freq: np.ndarray) -> np.ndarray:
+    """One component's gain over an array, broadcast for the constant models."""
+    gain = np.asarray(component.gain(freq), dtype=float)
+    if gain.ndim == 0:
+        return np.full(freq.shape, float(gain))
+    return gain
+
+
+def _defined_edge(component, inside: float, outside: float) -> float:
+    """
+    Bisect for the frequency at which a model stops answering.
+
+    ``inside`` is a probe point that returned a number and ``outside`` is its
+    neighbour that returned NaN, so the boundary lies between them; 40 halvings
+    put it far inside display precision.
+    """
+    for _ in range(40):
+        middle = 0.5 * (inside + outside)
+        if np.isfinite(_gain_curve(component, np.array([middle]))[0]):
+            inside = middle
+        else:
+            outside = middle
+    return inside
+
+
+def _defined_span(component) -> Optional[tuple]:
+    """
+    The carrier band a model is valid over, found by asking it.
+
+    A model that extrapolates past its datasheet answers with a number
+    everywhere, so it cannot state its band through NaN and instead declares it
+    outright with ``defined_span_hz`` - the filters do this. Otherwise the model
+    is built with ``bounds_error=False`` and no fill value, so outside its
+    tabulated range it returns NaN, and that NaN *is* the same statement made
+    the other way; bisecting for it is why this reads no interpolator's knots.
+
+    Either way the model is the one answering, and no attribute of its datasheet
+    storage is touched, so a model that changes how it holds its curve keeps
+    working here.
+
+    Returns None for a model that answers everywhere and declares no band - a
+    flat attenuator, or a cable built to extrapolate - which has none to show.
+    """
+    declared = getattr(component, "defined_span_hz", None)
+    if declared is not None:
+        low, high = declared()
+        return float(low), float(high)
+
+    finite = np.isfinite(_gain_curve(component, _PROBE_HZ))
+    if not finite.any() or finite.all():
+        return None
+    first = int(np.argmax(finite))
+    last = int(len(finite) - 1 - np.argmax(finite[::-1]))
+    low = (_PROBE_HZ[first] if first == 0
+           else _defined_edge(component, _PROBE_HZ[first], _PROBE_HZ[first - 1]))
+    high = (_PROBE_HZ[last] if last == len(finite) - 1
+            else _defined_edge(component, _PROBE_HZ[last], _PROBE_HZ[last + 1]))
+    return float(low), float(high)
+
+
+def _noise_summary(component, carrier_hz: float,
+                   spectral_hz: float) -> Dict[str, Any]:
+    """
+    What one component contributes on its own, and in which unit to say it.
+
+    A source that is white near the carrier has a single noise temperature,
+    which is how the datasheets quote an amplifier and how ``k_B*T`` reads for a
+    warm attenuator. One with spectral structure - DAC phase noise - has no
+    temperature at all, so ``kind`` is ``"spectral"`` and the caller should
+    quote the density at the offset it asked about instead.
+
+    ``referred_to`` is the component's own ``noise_reference``: whether this
+    figure stands at its input, and so is acted on by its own gain, or at its
+    output, and so is not.
+    """
+    across = np.asarray(component.noise(carrier_hz, _NOISE_OFFSETS_HZ),
+                        dtype=float)
+    if across.ndim == 0:
+        across = np.full(_NOISE_OFFSETS_HZ.shape, float(across))
+    finite = across[np.isfinite(across)]
+
+    if not finite.size:
+        kind = "unknown"            # not defined at this carrier
+    elif np.all(finite == 0.0):
+        kind = "none"               # a filter, say: lossy but not a source
+    # atol=0: these are powers in W/Hz, around 1e-20 for a cold amplifier, so
+    # np.allclose's default absolute tolerance of 1e-8 would call every source
+    # in the library flat - including the DAC's phase-noise skirt, which spans
+    # seven decades over this axis. Only a relative comparison means anything.
+    elif np.allclose(finite, finite[0], rtol=1e-6, atol=0.0):
+        kind = "flat"
+    else:
+        kind = "spectral"
+
+    at = float(np.asarray(component.noise(carrier_hz, spectral_hz),
+                          dtype=float).ravel()[0])
+    positive = math.isfinite(at) and at > 0.0
+    return {"kind": kind, "referred_to": component.noise_reference,
+            "w_per_hz": _num(at),
+            "dbm_per_hz": _num(to_dbm(at)) if positive else None,
+            "temperature_k": _num(at / kb) if positive else None}
+
+
+@_guard
+def component_specs(type_id: str, params: Optional[Dict[str, Any]] = None,
+                    carrier_hz: float = 1.5e9, spectral_hz: float = 1.0e3,
+                    start_hz: float = 1.0e8, stop_hz: float = 3.0e9,
+                    n: int = 161) -> Dict[str, Any]:
+    """
+    One model's specification, evaluated on its own rather than in a chain.
+
+    This is what a library entry can say about itself before it is added: the
+    registry's label and docstring, plus what the model actually computes - its
+    gain across the band it is defined over, and what it contributes at the
+    operating point the caller names. Same source as everything else here, so a
+    spec cannot disagree with the budget the component then lands in.
+
+    Nothing is stored: the component is built, asked and dropped, so the current
+    chain is untouched and the answer is the same whether or not that model is
+    in it. ``params`` defaults each declared parameter, so calling with none
+    describes the entry as the library would install it.
+
+    The sweep runs over the band the model answers for (see
+    :func:`_defined_span`). ``start_hz``/``stop_hz`` are the fallback for a
+    model that answers everywhere and so has no band of its own to show;
+    ``span_source`` says which of the two was used.
+    """
+    entry = registry.resolve(type_id)
+    component = registry.create(type_id, params)
+    carrier = float(carrier_hz)
+
+    span = _defined_span(component)
+    span_source = "model" if span is not None else "requested"
+    if span is None:
+        if float(stop_hz) <= float(start_hz):
+            raise ValueError(f"stop ({stop_hz}) must exceed start ({start_hz})")
+        span = (float(start_hz), float(stop_hz))
+
+    freq = np.linspace(span[0], span[1], max(2, int(n)))
+    gain = _gain_curve(component, freq)
+    finite = gain[np.isfinite(gain)]
+
+    return {
+        "type_id": entry.type_id,
+        "label": entry.label,
+        "category": entry.category,
+        "role": _role_of(entry.cls),
+        "doc": entry.doc,
+        # What the figures below were computed with, so a spec panel can say so
+        # rather than leaving the reader to assume they are parameter-free.
+        "params_used": component.params,
+        "carrier_hz": _num(carrier),
+        "spectral_hz": _num(spectral_hz),
+        "span_source": span_source,
+        "span_from_hz": _num(span[0]),
+        "span_to_hz": _num(span[1]),
+        "freq_hz": _arr(freq),
+        "gain_db": _arr(gain),
+        "gain_at_carrier_db": _num(_gain_curve(component,
+                                               np.array([carrier]))[0]),
+        "gain_min_db": _num(finite.min()) if finite.size else None,
+        "gain_max_db": _num(finite.max()) if finite.size else None,
+        # Decided here, not by comparing the two figures above in the view: a
+        # flat model is quoted as one number and a sloped one as a range.
+        "gain_flat": bool(finite.size and (finite.max() - finite.min()) < 0.005),
+        "noise": _noise_summary(component, carrier, float(spectral_hz)),
+    }
 
 
 # --------------------------------------------------------------------------

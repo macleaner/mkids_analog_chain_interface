@@ -46,6 +46,7 @@ def test_every_endpoint_returns_real_json():
     payloads = [
         chain_api.provenance(),
         chain_api.catalog(),
+        chain_api.component_specs("amplifier.asu_3ghz_lna"),
         chain_api.presets(),
         chain_api.describe(),
         chain_api.budget("LNA", "input", CARRIER, SPECTRAL),
@@ -519,6 +520,139 @@ def test_catalog_says_which_entries_are_endpoints():
     assert roles["converter.ad9082_adc"] == "adc"
     assert roles["amplifier.asu_3ghz_lna"] == "component"
     assert roles["cable.sma_ss086_cryo"] == "component"
+
+
+# ------------------------------------------------------------ component specs
+def test_every_registered_model_can_describe_itself():
+    """
+    The library panel calls this for whatever entry is clicked, so a model that
+    cannot be probed is a blank panel with an error toast, not a degraded one.
+    Every entry, including the converters the library itself does not list.
+    """
+    for entry in registry.entries():
+        spec = chain_api.component_specs(entry.type_id)
+        assert spec["ok"], (entry.type_id, spec.get("error"))
+        assert roundtrips(spec), entry.type_id
+        assert spec["label"] == entry.label
+        assert spec["span_to_hz"] > spec["span_from_hz"]
+        assert len(spec["gain_db"]) == len(spec["freq_hz"])
+
+
+def test_specs_report_the_models_own_numbers():
+    """
+    A spec panel that disagreed with the chain the component then joins would be
+    worse than no panel. Both come from the component, so assert they are the
+    same call and not a second path.
+    """
+    component = registry.create("amplifier.zx60_3018g_plus")
+    spec = chain_api.component_specs("amplifier.zx60_3018g_plus",
+                                     carrier_hz=CARRIER, spectral_hz=SPECTRAL)
+    assert spec["gain_at_carrier_db"] == pytest.approx(
+        float(component.gain(CARRIER)), rel=1e-12)
+    assert spec["noise"]["w_per_hz"] == pytest.approx(
+        float(component.noise(CARRIER, SPECTRAL)), rel=1e-12)
+
+
+def test_a_datasheet_span_is_found_by_probing_the_model():
+    """
+    The sweep runs over the band a model answers for, which is discovered by
+    asking it rather than by reading its interpolator's knots. These two
+    filters tabulate different spans, and the edges are the datasheet's.
+    """
+    low_pass = chain_api.component_specs("filter.vlf6700p")
+    assert low_pass["span_source"] == "model"
+    assert low_pass["span_from_hz"] == pytest.approx(50e6, rel=1e-6)
+    assert low_pass["span_to_hz"] == pytest.approx(19.89e9, rel=1e-6)
+
+    high_pass = chain_api.component_specs("filter.vhf1320p")
+    assert high_pass["span_from_hz"] == pytest.approx(1e6, rel=1e-6)
+    assert high_pass["span_to_hz"] == pytest.approx(3.7e9, rel=1e-6)
+
+
+def test_a_model_that_answers_everywhere_uses_the_span_it_was_given():
+    """
+    An attenuator has no band of its own, so there is nothing to discover and
+    the caller's span is used - and the payload says which, because "0.1-3 GHz"
+    means something different in the two cases.
+    """
+    spec = chain_api.component_specs("attenuator", start_hz=2e8, stop_hz=4e9)
+    assert spec["span_source"] == "requested"
+    assert (spec["span_from_hz"], spec["span_to_hz"]) == (2e8, 4e9)
+    assert spec["gain_flat"] is True
+    assert spec["gain_min_db"] == pytest.approx(-10.0)
+
+
+def test_a_sloped_model_is_not_reported_as_flat():
+    """``gain_flat`` decides how the view quotes a gain, so it has to be the
+    model's own answer and not a comparison of two rounded figures."""
+    spec = chain_api.component_specs("cable.sma_ss086_cryo", {"length_m": 2.0})
+    assert spec["gain_flat"] is False
+    assert spec["gain_min_db"] < spec["gain_max_db"]
+
+
+def test_noise_kind_separates_a_skirt_from_a_temperature():
+    """
+    A noise temperature only means anything for a source that is white near the
+    carrier. The AD9082's phase noise falls about 10 dB per decade of offset, so
+    quoting it as one temperature would be wrong however it were rounded - and
+    the powers involved are around 1e-12 W/Hz, small enough that a comparison
+    made on absolute tolerance calls every source in the library flat.
+    """
+    dac = chain_api.component_specs("converter.ad9082_dac")
+    assert dac["noise"]["kind"] == "spectral"
+
+    for type_id in ("attenuator", "amplifier.asu_3ghz_lna",
+                    "converter.ad9082_adc"):
+        assert chain_api.component_specs(type_id)["noise"]["kind"] == "flat", \
+            type_id
+
+    # Lossy, but not a source: a filter passes noise on without adding any.
+    assert chain_api.component_specs("filter.vhf1910p")["noise"]["kind"] == "none"
+
+
+def test_a_temperature_is_quoted_where_the_model_refers_it():
+    """
+    Whether a figure stands at the component's input or its output decides
+    whether its own gain acts on it, so the panel has to be able to say which.
+    """
+    amplifier = chain_api.component_specs("amplifier.asu_3ghz_lna")
+    assert amplifier["noise"]["referred_to"] == "input"
+    assert amplifier["noise"]["temperature_k"] == pytest.approx(6.0, rel=1e-3)
+
+    attenuator = chain_api.component_specs("attenuator",
+                                           {"attenuation": -20.0,
+                                            "temperature": 4.0})
+    assert attenuator["noise"]["referred_to"] == "output"
+    assert attenuator["noise"]["temperature_k"] == pytest.approx(4.0, rel=1e-9)
+
+
+def test_describing_a_component_does_not_touch_the_chain():
+    """The panel is read-only: looking at a model must not edit the record."""
+    before = chain_api.to_json()["json"]
+    for entry in registry.entries():
+        chain_api.component_specs(entry.type_id)
+    assert chain_api.to_json()["json"] == before
+
+
+def test_specs_default_the_parameters_and_say_what_they_used():
+    """
+    Called with no parameters, this describes the entry as a double-click would
+    install it - so the figures are the defaults', and the payload reports them
+    rather than leaving that to be assumed.
+    """
+    spec = chain_api.component_specs("attenuator")
+    assert spec["params_used"] == {"attenuation": -10.0, "temperature": 300.0}
+
+    edited = chain_api.component_specs("attenuator", {"attenuation": -3.0})
+    assert edited["params_used"]["attenuation"] == -3.0
+    assert edited["gain_min_db"] == pytest.approx(-3.0)
+
+
+def test_a_bad_parameter_is_reported_not_raised():
+    """Same validation as an edit, and the same shape of failure."""
+    result = chain_api.component_specs("attenuator", {"attenuation": 50.0})
+    assert result["ok"] is False
+    assert "above the maximum" in result["error"]
 
 
 def test_add_then_remove_restores_the_budget():

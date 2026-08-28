@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-labelledby="t d">
+  <title id="t">Analog Chain Calculator</title>
+  <desc id="d">Two interlocking links, the second larger than the first.</desc>
+
+  <!-- Panel. Colours are the app's own: web/template.html. -->
+  <rect x="2" y="2" width="60" height="60" rx="13" fill="#24272e" stroke="#31363f" stroke-width="1"/>
+
+  <!-- A chain of two stages, growing along its length.
+       Three things this geometry is load-bearing about:
+       - The links overlap deeply, so the small link's cap falls inside the
+         large link's opening. At shallower overlap the cap lands under the
+         stroke, the halo erases it whole, and the link collapses into a "C".
+       - The large link is wider than it is tall. A true circle with a smaller
+         loop to its left reads as a mug and its handle.
+       - Both are rounded rather than elongated ovals, which read as a padlock.
+       The large link is drawn twice, a panel-coloured halo first, so it punches
+       a gap in the small one behind it. -->
+  <g fill="none" stroke-linejoin="round">
+    <rect x="6"  y="22" width="26" height="20" rx="10" stroke="#d9a441" stroke-width="2.75"/>
+
+    <rect x="23" y="16" width="35" height="32" rx="16" stroke="#24272e" stroke-width="6.5"/>
+    <rect x="23" y="16" width="35" height="32" rx="16" stroke="#d9a441" stroke-width="3"/>
+  </g>
+</svg>

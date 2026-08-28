@@ -62,9 +62,26 @@ textarea{resize:vertical;line-height:1.45}
 #grid>section{background:var(--bg);overflow-y:auto;padding:13px}
 #plots{grid-column:1/-1;background:var(--bg);padding:13px;
   display:grid;grid-template-columns:1fr 1fr;gap:14px}
+/* The library list scrolls inside the column and the spec panel sits below it,
+   so the specs of the entry just clicked stay in view while you scroll on
+   looking for the next one.
+   min-height on the list, because the column is only as tall as its grid row:
+   in a short window the panel is most of that, and a list free to shrink went
+   to zero height. Past that floor the column itself scrolls instead - two
+   scrollbars in a cramped window, but every entry stays reachable and the
+   panel never covers the list it is describing. */
+#col1{display:flex;flex-direction:column;overflow-y:auto}
+#col1>*{flex:0 0 auto}
+#lib{flex:1 1 auto;overflow-y:auto;min-height:132px}
+
 @media (max-width:1100px){
   #grid{grid-template-columns:1fr;height:auto}
   #plots{grid-template-columns:1fr}
+  /* One tall column that scrolls as a page: the list flows at its full height
+     again and the panel follows it. Two ids, so this beats the rules above
+     whichever order the two end up in. */
+  #grid #col1,#grid #lib{overflow:visible}
+  #grid #lib{flex:0 0 auto;min-height:0}
 }
 
 .cat{margin-bottom:12px}
@@ -74,6 +91,39 @@ textarea{resize:vertical;line-height:1.45}
   background:transparent;border:1px solid transparent;font-size:12px;border-radius:4px;
   user-select:none}
 .lib:hover{background:var(--panel2);border-color:var(--line)}
+.lib.on{background:var(--panel2);border-color:var(--accent)}
+
+/* ---- the spec panel, at the foot of the library column ---- */
+#specs{margin-top:10px;padding-top:9px;border-top:1px solid var(--line)}
+#specs h2{margin:0 0 6px}
+#specs .sname{font-weight:600;font-size:12px;color:var(--accent);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Two lines at most: a docstring's first line is as long as its author made it,
+   and the panel shares a fixed-height column with the list, so an unbounded
+   description would spend on prose the height the figures need. */
+#specs .sdoc{margin:2px 0 7px;display:-webkit-box;-webkit-box-orient:vertical;
+  -webkit-line-clamp:2;overflow:hidden}
+#specs .sbox{background:var(--panel);border:1px solid var(--line);
+  border-radius:5px;padding:4px 5px}
+/* preserveAspectRatio="none" is what lets one viewBox fill whatever width the
+   column has; the strokes are non-scaling so none of them is stretched by it.
+   The drawing itself carries geometry only - the palette lives here, with the
+   rest of the page's. */
+#specs .spark{display:block;width:100%;height:46px}
+#specs .spark *{vector-effect:non-scaling-stroke}
+#specs .spark .curve{fill:none;stroke:var(--accent2);stroke-width:1.4}
+#specs .spark .zero{stroke:var(--ink3);stroke-dasharray:3 3;opacity:.55}
+#specs .spark .mark{fill:var(--accent)}
+#specs .sax{display:flex;justify-content:space-between;margin:3px 0 1px;
+  font-family:var(--mono);font-size:9px;color:var(--ink3)}
+/* Between the two frequencies, and not one of them, so it does not read as a
+   value the model reports. */
+#specs .sax .snote{font-style:italic;opacity:.7}
+#specs .srow{display:flex;justify-content:space-between;gap:8px;
+  align-items:baseline;font-size:11px;margin-top:3px}
+#specs .srow>span:first-child{color:var(--ink3);white-space:nowrap}
+#specs .srow>span:last-child{font-family:var(--mono);color:var(--ink);
+  text-align:right}
 
 .stage{border:1px solid var(--line);border-radius:6px;margin-bottom:5px;
   background:var(--panel);overflow:hidden}
@@ -122,6 +172,7 @@ textarea{resize:vertical;line-height:1.45}
   margin-top:6px;font-size:12px}
 .prow .u{font-family:var(--mono);font-size:10px;color:var(--ink3)}
 .doc{font-size:11px;color:var(--ink3);margin:5px 0 0;line-height:1.45}
+.doc code{font-family:var(--mono);font-size:10px;color:var(--ink2)}
 
 .ctl{display:grid;grid-template-columns:1fr 116px;gap:8px;align-items:center;
   margin-bottom:6px;font-size:12px}
@@ -129,6 +180,36 @@ textarea{resize:vertical;line-height:1.45}
 .seg button{border-radius:0;flex:1;padding:3px 6px;font-size:11px}
 .seg button:first-child{border-radius:5px 0 0 5px}
 .seg button:last-child{border-radius:0 5px 5px 0}
+
+/* The tab strip stands where the other two columns' h1 stands, and carries the
+   same typography, so the column still reads as titled rather than as a widget
+   bolted above the panel. */
+.tabs{display:flex;gap:2px;margin:0 0 10px;border-bottom:1px solid var(--line)}
+.tabs button{background:transparent;border:none;border-radius:0;
+  border-bottom:2px solid transparent;padding:2px 8px 5px;margin-bottom:-1px;
+  font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink3)}
+.tabs button:hover{color:var(--ink2)}
+.tabs button.on{color:var(--accent);border-bottom-color:var(--accent)}
+
+#paneJson .doc{margin:0 0 8px}
+/* The file scrolls inside its own box rather than scrolling the column, so a
+   long chain does not carry the tab strip off the top of the screen with it.
+   Hence the column being a flex box and the file claiming what is left of it:
+   the height to bound by is this section's, and this section is one row of a
+   grid that also holds the plots - not the viewport's.
+
+   :not([hidden]) because a display of its own would otherwise beat the hidden
+   attribute, and the pane would never close.                                 */
+#col3{display:flex;flex-direction:column}
+#col3 .pane{min-height:0}
+#paneJson:not([hidden]){display:flex;flex-direction:column;flex:1}
+/* white-space:pre, not pre-wrap: a wrapped line looks like an indent level the
+   file does not have, and this panel is here to show what the file is. */
+#jsonview{font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--ink2);
+  background:var(--panel);border:1px solid var(--line);border-radius:6px;
+  padding:9px 11px;margin:0;white-space:pre;user-select:text;
+  overflow:auto;flex:1 1 auto;min-height:120px}
 
 table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px}
 th{text-align:right;color:var(--ink3);font-weight:500;padding:4px 5px;
@@ -186,10 +267,12 @@ tr.dom td{color:var(--accent)}
 <div id="err"></div>
 
 <div id="grid">
-  <section>
+  <section id="col1">
     <h1>Component library</h1>
-    <p class="doc">Double-click a component to append it to the chain.</p>
+    <p class="doc">Click a component for its specs; double-click to append it
+      to the chain.</p>
     <div id="lib"></div>
+    <div id="specs"></div>
   </section>
 
   <section>
@@ -199,21 +282,37 @@ tr.dom td{color:var(--accent)}
     <div id="stages"></div>
   </section>
 
-  <section>
-    <h1>Noise budget</h1>
-    <div class="ctl"><label>reference plane</label><select id="plane"></select></div>
-    <div class="ctl"><label>carrier (GHz)</label><input id="carrier" value="1.5"></div>
-    <div class="ctl"><label>spectral offset (kHz)</label><input id="spectral" value="1"></div>
-    <h2>Units</h2>
-    <div class="seg" id="unit">
-      <button data-u="contribution_dBm_per_hz" class="on">dBm/Hz</button>
-      <button data-u="contribution_w_per_hz">W/Hz</button>
-      <button data-u="contribution_K">K</button>
+  <section id="col3">
+    <div class="tabs" id="tabs" role="tablist">
+      <button data-pane="paneBudget" class="on" role="tab" aria-selected="true"
+        aria-controls="paneBudget">Noise budget</button>
+      <button data-pane="paneJson" role="tab" aria-selected="false"
+        aria-controls="paneJson">Chain file</button>
     </div>
-    <div class="tot" id="totals"></div>
-    <table><thead><tr>
-      <th>source</th><th id="uh">dBm/Hz</th><th>referral dB</th><th>share</th><th></th>
-    </tr></thead><tbody id="rows"></tbody></table>
+
+    <div class="pane" id="paneBudget" role="tabpanel">
+      <div class="ctl"><label>reference plane</label><select id="plane"></select></div>
+      <div class="ctl"><label>carrier (GHz)</label><input id="carrier" value="1.5"></div>
+      <div class="ctl"><label>spectral offset (kHz)</label><input id="spectral" value="1"></div>
+      <h2>Units</h2>
+      <div class="seg" id="unit">
+        <button data-u="contribution_dBm_per_hz" class="on">dBm/Hz</button>
+        <button data-u="contribution_w_per_hz">W/Hz</button>
+        <button data-u="contribution_K">K</button>
+      </div>
+      <div class="tot" id="totals"></div>
+      <table><thead><tr>
+        <th>source</th><th id="uh">dBm/Hz</th><th>referral dB</th><th>share</th><th></th>
+      </tr></thead><tbody id="rows"></tbody></table>
+    </div>
+
+    <div class="pane" id="paneJson" role="tabpanel" hidden>
+      <div class="tot" id="jsonmeta"></div>
+      <p class="doc">Read-only, and rewritten as you edit the chain. This is what
+        <b>download chain.json</b> writes and what <code>SignalChain.load</code>
+        reads back — not a summary of it.</p>
+      <pre id="jsonview"></pre>
+    </div>
   </section>
 
   <div id="plots">
@@ -292,8 +391,10 @@ function call(fn, ...args){
    every mutation goes through `call` and replaces this wholesale.            */
 let CHAIN = null, CATALOG = null;
 let selected = null;          // stageKey() of the open stage editor
+let libSelected = null;       // type_id whose specs the panel is showing
 let dragFrom = null;          // component_index being dragged, or null
 let unitCol = 'contribution_dBm_per_hz';
+let activePane = 'paneBudget';  // which of the third column's two tabs is up
 let showContrib = false;
 let gainPlot = null, noisePlot = null;
 
@@ -348,6 +449,7 @@ async function boot(){
 
     CATALOG = call('catalog');
     renderLibrary();
+    renderSpecs();
     CHAIN = call('load_preset', CONFIG.default_preset);
     renderAll();
     $('boot').style.display = 'none';
@@ -382,6 +484,18 @@ function renderLibrary(){
       btn.className = 'lib';
       btn.textContent = item.label;
       btn.title = item.doc || item.type_id;
+      /* A single click is what a click spent reading costs: it describes the
+         entry in the panel below and changes nothing about the chain. */
+      btn.onclick = guard(() => {
+        for (const other of document.querySelectorAll('.lib.on'))
+          other.classList.remove('on');
+        btn.classList.add('on');
+        // A double-click's first click arrives here too, so re-describing the
+        // entry already on show is skipped rather than redrawn.
+        if (libSelected === item.type_id) return;
+        libSelected = item.type_id;
+        renderSpecs();
+      });
       /* Double-click, so a click spent reading a label - or aimed at the one
          below - does not lengthen the chain.                                  */
       btn.ondblclick = guard(() => {
@@ -418,6 +532,202 @@ function defaultParams(item){
   for (const spec of item.params)
     if (spec.default !== null) params[spec.name] = spec.default;
   return params;
+}
+
+/* ===================== the spec panel =====================
+   What one model says about itself, for the library entry last clicked: a
+   description, its gain across the band it is defined over, and what it
+   contributes at the operating point the budget is set to. Python builds the
+   component, asks it and drops it, so these are the figures the chain would
+   use - a component cannot read one way here and behave another way once
+   added - and the current chain is not touched by looking.
+
+   The figures are for the registry's defaults, which is what a double-click
+   installs; editing the stage afterwards is what moves them. The panel says so
+   rather than leaving that to be assumed.                                    */
+
+/* A frequency as a label. Presentation only, the same 1e9 the gain plot's axis
+   applies - no result is being recomputed here. */
+function fmtHz(hz){
+  if (hz === null || hz === undefined) return '—';
+  if (hz === 0) return 'DC';
+  if (hz < 1e6) return (hz / 1e3).toPrecision(3) + ' kHz';
+  if (hz < 1e9) return (hz / 1e6).toPrecision(3) + ' MHz';
+  return (hz / 1e9).toPrecision(3) + ' GHz';
+}
+
+/* A noise temperature, at whatever magnitude the source happens to have: 4 K
+   for a cryogenic LNA, 300 K for a warm pad, and tens of thousands for a
+   converter, which is where fixed decimals stop being readable. */
+function fmtK(kelvin){
+  if (kelvin === null || kelvin === undefined) return '—';
+  if (kelvin >= 1e4) return kelvin.toExponential(2) + ' K';
+  if (kelvin >= 100) return kelvin.toFixed(0) + ' K';
+  if (kelvin >= 10) return kelvin.toFixed(1) + ' K';
+  return kelvin.toFixed(2) + ' K';
+}
+
+/* The gain curve as one small SVG. Every value drawn is Python's; what happens
+   here is the map from a dB figure to a coordinate in the box, the same
+   presentation step uPlot performs for the two large plots. A viewBox with
+   non-scaling strokes is what lets a single drawing fill whatever width the
+   column has, with no resize handler and nothing to redraw. */
+function sparkline(spec){
+  const W = 100, H = 34, PAD = 2;
+  const lo = spec.gain_min_db, hi = spec.gain_max_db;
+  const f0 = spec.span_from_hz, f1 = spec.span_to_hz;
+  const x = f => f1 === f0 ? W / 2 : W * (f - f0) / (f1 - f0);
+  const y = g => hi === lo ? H / 2
+                           : H - PAD - (H - 2 * PAD) * (g - lo) / (hi - lo);
+
+  // A null is a carrier this model is silent about, so the line breaks there
+  // instead of being drawn straight across the gap.
+  const runs = [];
+  let run = [];
+  spec.gain_db.forEach((gain, i) => {
+    if (gain === null){ if (run.length) runs.push(run); run = []; return; }
+    run.push(`${x(spec.freq_hz[i]).toFixed(2)},${y(gain).toFixed(2)}`);
+  });
+  if (run.length) runs.push(run);
+
+  const marks = [];
+  if (lo < 0 && hi > 0){                        // unity gain, when it is in range
+    const zero = y(0).toFixed(2);
+    marks.push(`<line class="zero" x1="0" y1="${zero}" x2="${W}" y2="${zero}"/>`);
+  }
+  const at = spec.gain_at_carrier_db;
+  if (at !== null && spec.carrier_hz >= f0 && spec.carrier_hz <= f1)
+    marks.push(`<circle class="mark" cx="${x(spec.carrier_hz).toFixed(2)}" `
+             + `cy="${y(at).toFixed(2)}" r="2.2"/>`);
+
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">`
+       + marks.join('')
+       + runs.map(points =>
+           `<polyline class="curve" points="${points.join(' ')}"/>`).join('')
+       + `</svg>`;
+}
+
+function specRow(label, value, why){
+  const row = document.createElement('div');
+  row.className = 'srow';
+  const left = document.createElement('span'), right = document.createElement('span');
+  left.textContent = label;
+  right.textContent = value;
+  if (why) row.title = why;
+  row.append(left, right);
+  return row;
+}
+
+/* Which unit a component's own noise is quoted in, and why. Python decides by
+   evaluating the model across the spectral axis - a source that is white near
+   the carrier has a noise temperature and one with a skirt does not - so all
+   that is chosen here is the wording. */
+function noiseRow(spec){
+  const noise = spec.noise;
+  const where = noise.referred_to === 'input' ? 'at its input' : 'at its output';
+  if (noise.kind === 'none')
+    return specRow('noise', 'none',
+      'Not a noise source itself — it only passes on what reaches it.');
+  if (noise.kind === 'unknown')
+    return specRow('noise', '—',
+      'This model does not specify a noise figure at that carrier frequency.');
+  if (noise.kind === 'spectral')
+    return specRow(`noise @ ${fmtHz(spec.spectral_hz)}`,
+      noise.dbm_per_hz === null ? '—' : noise.dbm_per_hz.toFixed(1) + ' dBm/Hz',
+      'Varies with the offset from the carrier, so no single noise temperature '
+    + `covers it. Quoted ${where}.`);
+  return specRow('noise', fmtK(noise.temperature_k),
+    `White near the carrier, so one noise temperature covers it. Quoted ${where}.`);
+}
+
+function renderSpecs(){
+  const host = $('specs');
+  host.innerHTML = '';
+  // With a model on show its name is the panel's heading, so the standing one
+  // is only drawn when there is nothing to head - the panel is short enough
+  // that a line of chrome is worth more as a line of specs.
+  if (!libSelected){
+    const head = document.createElement('h2');
+    head.textContent = 'Model specs';
+    const hint = document.createElement('p');
+    hint.className = 'doc';
+    hint.style.margin = '0';
+    hint.textContent = 'Click a component above to see what its model says.';
+    host.append(head, hint);
+    return;
+  }
+  // The carrier and the offset are the budget's, so a spec is read at the
+  // operating point being worked at rather than at some fixed one. The gain
+  // plot's span is the fallback for a model with no band of its own.
+  const spec = call('component_specs', libSelected, null,
+                    num($('carrier').value) * 1e9,
+                    num($('spectral').value) * 1e3,
+                    num($('g0').value) * 1e9,
+                    num($('g1').value) * 1e9);
+
+  const name = document.createElement('div');
+  name.className = 'sname';
+  name.textContent = spec.label;
+  name.title = spec.type_id;
+  host.appendChild(name);
+
+  if (spec.doc){
+    const doc = document.createElement('p');
+    doc.className = 'doc sdoc';
+    doc.textContent = spec.doc.split('\n')[0];
+    host.appendChild(doc);
+  }
+
+  if (spec.gain_min_db !== null){
+    const box = document.createElement('div');
+    box.className = 'sbox';
+    box.innerHTML = sparkline(spec);
+    box.title = (spec.span_source === 'model'
+        ? 'Gain across the band this model is defined over.'
+        : 'Gain across the gain plot’s span — this model answers at any '
+        + 'frequency, so it has no band of its own.')
+      + ' The dot is the carrier the budget is set to; the dashed line is 0 dB,'
+      + ' where that falls in range.';
+    host.appendChild(box);
+
+    const axis = document.createElement('div');
+    axis.className = 'sax';
+    const from = document.createElement('span'), to = document.createElement('span');
+    from.textContent = fmtHz(spec.span_from_hz);
+    to.textContent = fmtHz(spec.span_to_hz);
+    axis.append(from, to);
+    // Said plainly, because the two cases mean different things: a band is a
+    // statement about the model, whereas the plot's span is just where we
+    // happened to look at a model that answers anywhere.
+    if (spec.span_source !== 'model'){
+      const note = document.createElement('span');
+      note.className = 'snote';
+      note.textContent = 'plot span';
+      axis.insertBefore(note, to);
+    }
+    host.appendChild(axis);
+  }
+
+  host.appendChild(specRow('gain',
+    spec.gain_min_db === null ? '—'
+      : spec.gain_flat ? `${spec.gain_min_db.toFixed(2)} dB flat`
+      : `${spec.gain_min_db.toFixed(2)} … ${spec.gain_max_db.toFixed(2)} dB`,
+    spec.gain_flat ? 'The same at every carrier frequency.'
+                   : 'Lowest and highest across the band above.'));
+  host.appendChild(specRow(`at ${fmtHz(spec.carrier_hz)}`,
+    spec.gain_at_carrier_db === null ? '—'
+      : `${spec.gain_at_carrier_db.toFixed(2)} dB`,
+    'Gain at the carrier the budget is set to.'));
+  host.appendChild(noiseRow(spec));
+
+  // Only for a model that has parameters at all: a filter's figures are its
+  // datasheet's, but an attenuator's depend on the values above, and reading
+  // -10 dB without knowing that is how a spec gets misremembered.
+  const values = stageValues({type_id: spec.type_id, params: spec.params_used});
+  if (values)
+    host.appendChild(specRow('at defaults', values,
+      'These figures are for the registry defaults, which is what a '
+    + 'double-click installs. Change them on the stage once it is in the chain.'));
 }
 
 /* ===================== digitizer =====================
@@ -871,6 +1181,42 @@ function renderBudget(){
   }
 }
 
+/* ===================== the chain file =====================
+   The same call the download button makes, shown instead of written. It is a
+   view of `SignalChain.to_dict()`, not a rendering of `CHAIN` - the describe()
+   payload the rest of this page draws from is shaped for the view and is not
+   the file, so reconstructing the file from it would be a second serializer to
+   keep in step with the first. Asking Python for the real one costs a to_dict
+   and a dumps, and cannot disagree with what the download writes.
+
+   Printed with textContent, so what is on screen is byte for byte the file -
+   no escaping, and no highlighter deciding where a token ends.                */
+function renderJson(){
+  // Only the visible pane is worth a round trip; switching to it renders it.
+  if (activePane !== 'paneJson') return;
+  const result = call('to_json', 2);
+  $('jsonview').textContent = result.json;
+
+  // Bytes, not characters: a description with an ohm sign in it is longer on
+  // disk than it is on screen, and this is meant to describe the file.
+  const kb = new TextEncoder().encode(result.json).length / 1024;
+  const meta = $('jsonmeta');
+  meta.innerHTML = `<span>saves as <b></b></span><span><b>${kb.toFixed(1)}</b> kB</span>`;
+  meta.querySelector('b').textContent = result.suggested_filename;
+}
+
+function selectPane(name){
+  activePane = name;
+  for (const btn of document.querySelectorAll('#tabs button')){
+    const on = btn.dataset.pane === name;
+    btn.classList.toggle('on', on);
+    btn.setAttribute('aria-selected', String(on));
+  }
+  for (const pane of document.querySelectorAll('#col3 .pane'))
+    pane.hidden = pane.id !== name;
+  renderJson();
+}
+
 /* ===================== plots ===================== */
 const AXIS = {stroke:'#6b7382', grid:{stroke:'#262a32', width:1},
               ticks:{stroke:'#31363f'}, font:'10px ui-monospace,monospace'};
@@ -942,6 +1288,10 @@ function renderAll(){
   renderStages();
   renderPlanes();
   renderAnalysis();
+  // Last, so a chain that cannot be serialized still leaves a drawn page to
+  // fix it on. Every mutation lands here, which is what keeps the file view in
+  // step with the chain; the budget's own controls do not change the file.
+  renderJson();
 }
 function renderAnalysis(){
   renderBudget();
@@ -951,9 +1301,12 @@ function renderAnalysis(){
 
 /* ===================== wiring ===================== */
 $('plane').onchange = guard(renderBudget);
-$('carrier').onchange = guard(() => { renderBudget(); renderNoise(); });
-$('spectral').onchange = guard(renderBudget);
-$('g0').onchange = $('g1').onchange = guard(renderGain);
+/* The spec panel quotes a model at the carrier and offset the budget is set to,
+   and falls back to the gain plot's span for a model with no band of its own,
+   so all three of these move it. */
+$('carrier').onchange = guard(() => { renderBudget(); renderNoise(); renderSpecs(); });
+$('spectral').onchange = guard(() => { renderBudget(); renderSpecs(); });
+$('g0').onchange = $('g1').onchange = guard(() => { renderGain(); renderSpecs(); });
 $('n0').onchange = $('n1').onchange = $('nplane').onchange = guard(renderNoise);
 
 for (const btn of document.querySelectorAll('#unit button'))
@@ -963,6 +1316,9 @@ for (const btn of document.querySelectorAll('#unit button'))
       other.classList.toggle('on', other === btn);
     renderBudget();
   });
+
+for (const btn of document.querySelectorAll('#tabs button'))
+  btn.onclick = guard(() => selectPane(btn.dataset.pane));
 
 $('btnContrib').onclick = guard(() => {
   showContrib = !showContrib;
