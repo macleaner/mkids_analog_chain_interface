@@ -339,6 +339,110 @@ class ASU_3GHz_LNA(ActiveComponent):
                                 spectral_frequency)
 
 
+class _InterpolatedLNA(ActiveComponent):
+    """
+    Shared implementation for the fixed cryogenic LNA models.
+
+    Subclasses set ``gain_response`` and ``noise_response``, each a
+    ``(frequencies_Hz, values)`` pair - gain in dB, noise as a temperature in K,
+    which is how these parts are specified and measured.
+
+    Both curves keep the sibling LNAs' out-of-band behaviour: NaN rather than an
+    extrapolated number, since an amplifier outside its band is not a gentler
+    version of itself the way a filter's stopband is, and the measured rolloff
+    at the edge says nothing about what happens past it. That NaN is also what
+    ``chain_api`` bisects for to find the band a spec panel plots over, so the
+    band shown is the measurement's own.
+
+    ``noise_response`` must cover at least the span of ``gain_response``, or a
+    chain would take gain from a component that reports no noise there.
+    """
+
+    #: (frequencies_Hz, gain_dB), set by each subclass.
+    gain_response = None
+    #: (frequencies_Hz, noise_temperature_K), set by each subclass.
+    noise_response = None
+
+    def __init__(self, name=None):
+        super().__init__(name=name, params={})
+
+        gain_f, gain_db = self.gain_response
+        self.f_datasheet = np.asarray(gain_f, dtype=float)
+        self.gain_datasheet = np.asarray(gain_db, dtype=float)
+        self.gain_f = interpolate.interp1d(
+            self.f_datasheet, self.gain_datasheet, bounds_error=False)
+
+        noise_f, noise_temp_k = self.noise_response
+        self.noise_temp_datasheet = np.asarray(noise_temp_k, dtype=float)
+        self.noise_power_datasheet = kb * self.noise_temp_datasheet
+        self.noise_f = interpolate.interp1d(
+            np.asarray(noise_f, dtype=float), self.noise_power_datasheet,
+            bounds_error=False)
+
+    def gain(self, carrier_frequency):
+        return self.gain_f(carrier_frequency)
+
+    def noise(self, carrier_frequency, spectral_frequency):
+        """Noise temperature varies with carrier; white in spectral frequency."""
+        return flat_in_spectral(self.noise_f(carrier_frequency),
+                                spectral_frequency)
+
+
+@register("amplifier.cmt_citcryo1_12d", category="Amplifiers",
+          label="CMT CITCRYO1-12D (~5 K)")
+class CMT_CITCRYO1_12D(_InterpolatedLNA):
+    """
+    Cryogenic LNA, 1-12 GHz, roughly 5 K noise temperature.
+
+    Gain is measured rather than quoted: the SN216D s2p at 13 K, Vd = 1.2 V,
+    which runs to 14 GHz and so past the 1-12 GHz the part is specified over.
+
+    Noise is the datasheet's single 5 K figure at 12 K physical, held flat,
+    because no digitised noise-versus-frequency curve was supplied for this
+    part. Flat is what one number can honestly say; it is not a measurement of
+    flatness, and a real HEMT's noise rises at both band edges.
+    """
+
+    gain_response = (
+        1e9 * np.asarray(
+            [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5,
+             6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5,
+             11, 11.5, 12, 12.5, 13, 13.5, 14]),
+        np.asarray(
+            [34.8, 36.1, 37, 37.1, 37.2, 37, 36.8, 36.6, 36.6, 36.6,
+             36.7, 36.8, 37.1, 37.3, 37.4, 37.2, 37.5, 37.5, 37.6, 37.4,
+             37.1, 37.2, 37.2, 37.1, 37, 36.5, 36.3]),
+    )
+    # Spans the gain curve, so the two are defined over the same band.
+    noise_response = (1e9 * np.asarray([1, 14]), np.asarray([5.0, 5.0]))
+
+
+@register("amplifier.lnf_lnc1_5_6b", category="Amplifiers",
+          label="LNF-LNC1.5_6B (~1.8 K)")
+class LNF_LNC1_5_6B(_InterpolatedLNA):
+    """
+    Cryogenic LNA, 1.5-6 GHz, roughly 1.8 K noise temperature.
+
+    Low Noise Factory LNC1.5_6B at 5 K, on its one published bias point,
+    Vds = 1.9 V and Ids = 29 mA. The noise curve is the reason to reach for this
+    part and the reason to read it before trusting the headline: 1.6 K over the
+    middle of the band, but 6 K at 1.5 GHz, so the bottom decile of the band
+    costs more than three times the quoted figure.
+    """
+
+    gain_response = (
+        1e9 * np.asarray([1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0]),
+        np.asarray([30.6, 28.3, 28.0, 27.8, 27.4, 27.3, 27.5, 27.6, 27.9,
+                    28.0]),
+    )
+    noise_response = (
+        1e9 * np.asarray([1.5, 1.6, 1.8, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0,
+                          5.5, 6.0]),
+        np.asarray([6.0, 4.0, 2.0, 1.65, 1.6, 1.65, 1.65, 1.7, 1.7, 1.95,
+                    2.0, 2.3]),
+    )
+
+
 class _InterpolatedFilter(PassiveComponent):
     """
     Shared implementation for the fixed filter models, high- and low-pass alike.

@@ -42,6 +42,8 @@ COMPONENT_SPECS = {
     "ASU_3GHz_LNA": {},
     "ZX60_3018Gplus": {},
     "CryoElec_LNA": {},
+    "CMT_CITCRYO1_12D": {},
+    "LNF_LNC1_5_6B": {},
     "Attenuator": {"attenuation": -10, "temperature": 300},
     "SMA_cables": {"length_m": 0.5},
     "SMA_CuNi_cryo": {"length_m": 0.5, "temperature": 4},
