@@ -191,6 +191,181 @@ def test_set_label_rejects_a_duplicate():
     assert "already refers to" in result["error"]
 
 
+def test_appended_converter_keeps_a_component_index():
+    """
+    A converter belongs at an endpoint, but nothing stops one being appended -
+    from a script, or from a chain file that recorded it that way. It is then a
+    normal member of ``chain.components`` and must be reported with its index:
+    without one the browser can neither edit nor remove it, so the chain holds
+    a stage the user cannot get rid of.
+    """
+    added = chain_api.add_component("converter.ad9082_dac", {}, "StrayDAC")
+    assert added["ok"], added.get("error")
+    stray, = [s for s in added["stages"] if s["label"] == "StrayDAC"]
+    assert stray["kind"] == "dac"                    # still a DAC by class
+    assert stray["component_index"] == added["n_components"] - 1
+    # The installed DAC is the one without an index, identified by identity.
+    installed = [s for s in added["stages"] if s["component_index"] is None]
+    assert [s["kind"] for s in installed] == ["dac", "adc"]
+    assert chain_api.remove_component(stray["component_index"])["ok"]
+
+
+# ---------------------------------------------------------------- new chains
+def test_new_chain_is_empty_and_still_describable():
+    """
+    The browser renders whatever ``describe`` reports, so a chain with no
+    stages has to be a valid answer rather than an error: no stages, no planes,
+    and no converters until :func:`set_digitizer` installs them.
+    """
+    result = chain_api.new_chain("Cooldown 12")
+    assert result["ok"], result.get("error")
+    assert result["name"] == "Cooldown 12"
+    assert result["stages"] == [] and result["planes"] == []
+    assert result["n_components"] == 0
+    assert result["digitizer"] == {"dac": None, "adc": None}
+    assert result["has_digitizer"] is False
+    assert roundtrips(result)
+
+
+def test_an_empty_chain_still_sweeps():
+    """
+    The plots are drawn on every render, including right after "new chain".
+    Both sweeps must return data for an empty chain - zero gain, and a total
+    noise of zero, which is non-finite in dBm and so comes back as null.
+    """
+    chain_api.new_chain("Empty")
+    gain = chain_api.sweep_gain(1e8, 3e9, 5)
+    assert gain["ok"], gain.get("error")
+    assert gain["gain_db"] == [0.0] * 5
+
+    noise = chain_api.sweep_noise(CARRIER, 1e0, 1e3, 5, True, True)
+    assert noise["ok"], noise.get("error")
+    assert noise["total_w_per_hz"] == [0.0] * 5
+    assert noise["total_dbm_per_hz"] == [None] * 5
+    assert noise["series"] == []
+    assert roundtrips(gain) and roundtrips(noise)
+
+
+def test_a_new_chain_can_be_built_up_and_saved():
+    """
+    The whole point of creating a chain in the browser: build one from nothing
+    and hand back a file a notebook reloads.
+    """
+    chain_api.new_chain("Bench 2026-08")
+    chain_api.set_digitizer("converter.ad9082_dac", "converter.ad9082_adc",
+                            {"carrier_power_dbm": -10.0}, None)
+    chain_api.add_component("attenuator", {"attenuation": -10.0,
+                                           "temperature": 300.0}, "InputAtten")
+    built = chain_api.add_component("amplifier.asu_3ghz_lna", {}, "LNA")
+    assert built["ok"], built.get("error")
+    assert [s["kind"] for s in built["stages"]] == \
+        ["dac", "passive", "active", "adc"]
+
+    exported = chain_api.to_json()
+    assert exported["suggested_filename"] == "bench_2026-08.json"
+    chain = SignalChain.from_dict(json.loads(exported["json"]))
+    assert chain.name == "Bench 2026-08"
+    assert chain.load_warnings == []
+    assert chain.dac.params["carrier_power_dbm"] == -10.0
+    assert sorted(chain.labels) == ["InputAtten", "LNA"]
+
+
+# ----------------------------------------------------------------- digitizer
+def test_set_digitizer_installs_endpoints_at_the_ends():
+    chain_api.new_chain("Ends")
+    chain_api.add_component("amplifier.asu_3ghz_lna", {}, "LNA")
+    result = chain_api.set_digitizer("converter.ad9082_dac",
+                                     "converter.ad9082_adc")
+    assert result["ok"], result.get("error")
+    assert [s["kind"] for s in result["stages"]] == ["dac", "active", "adc"]
+    # Endpoints, so neither is addressable as a component.
+    assert [s["component_index"] for s in result["stages"]] == [None, 0, None]
+    assert result["has_digitizer"] is True
+    # Omitted params come from the registry, not from anywhere in this module.
+    spec = registry.resolve("converter.ad9082_dac").param("carrier_power_dbm")
+    assert result["digitizer"]["dac"]["params"]["carrier_power_dbm"] == spec.default
+
+
+def test_set_digitizer_matches_signal_chain_directly():
+    """The facade must install the converters SignalChain would, not stand-ins."""
+    chain_api.new_chain("Compare")
+    chain_api.add_component("amplifier.asu_3ghz_lna", {}, "LNA")
+    chain_api.set_digitizer("converter.ad9082_dac", "converter.ad9082_adc",
+                            {"carrier_power_dbm": -10.0}, {"gain_db": 3.0})
+    actual = chain_api.budget("LNA", "input", CARRIER, SPECTRAL)
+
+    direct = SignalChain(name="Compare")
+    direct.add_component(registry.create("amplifier.asu_3ghz_lna", {}),
+                         label="LNA")
+    direct.set_digitizer(
+        registry.create("converter.ad9082_dac", {"carrier_power_dbm": -10.0}),
+        registry.create("converter.ad9082_adc", {"gain_db": 3.0}))
+    expected = direct.noise_budget("LNA", CARRIER, SPECTRAL, at="input")
+
+    assert actual["total_w_per_hz"] == pytest.approx(
+        float(expected.total_w), rel=1e-12)
+    assert actual["dominant"] == expected.dominant().label
+
+
+def test_set_digitizer_replaces_rather_than_merges():
+    """
+    A swap starts from the registry defaults - nothing is carried over from the
+    converter being replaced. A caller that wants the old settings passes them,
+    which is why the browser resends the end it did not touch.
+    """
+    chain_api.set_digitizer_param("dac", "carrier_power_dbm", -25.0)
+    swapped = chain_api.set_digitizer("converter.ad9082_dac",
+                                      "converter.ad9082_adc")
+    assert swapped["digitizer"]["dac"]["params"]["carrier_power_dbm"] == 0.0
+
+
+def test_set_digitizer_can_clear_both_ends():
+    result = chain_api.set_digitizer()
+    assert result["ok"], result.get("error")
+    assert result["digitizer"] == {"dac": None, "adc": None}
+    assert result["has_digitizer"] is False
+    assert all(s["kind"] not in ("dac", "adc") for s in result["stages"])
+    # Removing the DAC removes its noise, which dominated this preset.
+    assert chain_api.budget("LNA", "input", CARRIER, SPECTRAL)["dominant"] != \
+        "AD9082_DAC"
+
+
+def test_set_digitizer_param_rebuilds_the_converter():
+    """
+    Same reason as ``set_param``: the DAC fits its phase-noise model in
+    ``__init__``, so a carrier-power change has to rebuild it. 10 dB more
+    carrier is 10 dB more phase noise, referred anywhere.
+    """
+    before = chain_api.budget("AD9082_DAC", "output", CARRIER, SPECTRAL)
+    assert chain_api._CHAIN.dac.params["carrier_power_dbm"] == -10.0
+    result = chain_api.set_digitizer_param("dac", "carrier_power_dbm", 0.0)
+    assert result["ok"], result.get("error")
+    after = chain_api.budget("AD9082_DAC", "output", CARRIER, SPECTRAL)
+
+    by_source = lambda budget: {r["source"]: r for r in budget["rows"]}
+    assert (by_source(after)["AD9082_DAC"]["contribution_dBm_per_hz"]
+            - by_source(before)["AD9082_DAC"]["contribution_dBm_per_hz"]) == \
+        pytest.approx(10.0, abs=1e-9)
+    # The ADC at the other end is untouched by a DAC edit.
+    assert result["digitizer"]["adc"] == \
+        chain_api.describe()["digitizer"]["adc"]
+
+
+def test_catalog_says_which_entries_are_endpoints():
+    """
+    The view has to know a converter is installed rather than appended. That
+    comes from the class hierarchy, so it stays right for a converter added to
+    the registry later.
+    """
+    roles = {item["type_id"]: item["role"]
+             for group in chain_api.catalog()["categories"]
+             for item in group["components"]}
+    assert roles["converter.ad9082_dac"] == "dac"
+    assert roles["converter.ad9082_adc"] == "adc"
+    assert roles["amplifier.asu_3ghz_lna"] == "component"
+    assert roles["cable.sma_ss086_cryo"] == "component"
+
+
 def test_add_then_remove_restores_the_budget():
     original = chain_api.budget("LNA", "input", CARRIER, SPECTRAL)
     added = chain_api.add_component("filter.vhf1320p", {}, "OutFilter")
@@ -199,6 +374,65 @@ def test_add_then_remove_restores_the_budget():
     restored = chain_api.budget("LNA", "input", CARRIER, SPECTRAL)
     assert restored["total_w_per_hz"] == pytest.approx(
         original["total_w_per_hz"], rel=1e-12)
+
+
+# -------------------------------------------------------------------- record
+def test_the_record_is_saved_with_the_chain():
+    """
+    Name, notes and metadata cannot be recovered from the components, so if the
+    facade can set them it has to be into the file the chain is saved as - not
+    into view state that a download would leave behind.
+    """
+    chain_api.new_chain("Cooldown 12")
+    chain_api.set_description("Fridge run 3, sample QD-7 in the mixing chamber")
+    result = chain_api.set_metadata({"cooldown": 12, "sample": "QD-7",
+                                     "dataset": "/data/2026-08/run3"})
+    assert result["ok"], result.get("error")
+    assert result["metadata"]["cooldown"] == 12          # an int, not "12"
+
+    saved = json.loads(chain_api.to_json()["json"])
+    assert saved["name"] == "Cooldown 12"
+    assert saved["description"].startswith("Fridge run 3")
+    assert saved["metadata"] == {"cooldown": 12, "sample": "QD-7",
+                                 "dataset": "/data/2026-08/run3"}
+
+    reloaded = SignalChain.from_dict(saved)
+    assert reloaded.metadata == saved["metadata"]
+    assert reloaded.description == saved["description"]
+
+
+def test_renaming_renames_the_download():
+    renamed = chain_api.set_name("  Cooldown 13  ")
+    assert renamed["ok"], renamed.get("error")
+    assert renamed["name"] == "Cooldown 13"              # trimmed
+    assert chain_api.to_json()["suggested_filename"] == "cooldown_13.json"
+
+
+def test_a_suggested_filename_is_never_a_path():
+    """
+    The name is free text now that it can be edited, and it is handed to a
+    browser download. A slash in it must not become a directory.
+    """
+    chain_api.set_name("Cooldown 12/A (warm)")
+    assert chain_api.to_json()["suggested_filename"] == "cooldown_12_a__warm_.json"
+
+
+def test_metadata_is_replaced_not_merged():
+    chain_api.set_metadata({"cooldown": 12, "operator": "mr"})
+    result = chain_api.set_metadata({"cooldown": 13})
+    assert result["metadata"] == {"cooldown": 13}
+
+
+def test_unwritable_metadata_is_refused_at_the_edit():
+    """
+    Metadata is persisted verbatim, so something json.dumps cannot write makes
+    the chain unsaveable. Catching it here means the failure lands on the edit
+    that caused it, not on a download months later.
+    """
+    result = chain_api.set_metadata({"probe": {1, 2}})
+    assert result["ok"] is False
+    assert "not JSON serializable" in result["error"]
+    assert chain_api.to_json()["ok"] is True             # chain still writable
 
 
 # ------------------------------------------------------------- round tripping
@@ -233,6 +467,23 @@ def test_exported_json_loads_as_a_signal_chain():
     (lambda: chain_api.sweep_gain(1e9, 2e9, 1), "at least 2 points"),
     (lambda: chain_api.sweep_gain(0.0, 2e9, 10, True), "positive start"),
     (lambda: chain_api.from_json("{not json"), ""),
+    (lambda: chain_api.set_digitizer("converter.ad9082_adc"),
+     "cannot be the chain's DAC"),
+    (lambda: chain_api.set_digitizer(None, "amplifier.asu_3ghz_lna"),
+     "cannot be the chain's ADC"),
+    (lambda: chain_api.set_digitizer("converter.nope"), "unknown component"),
+    (lambda: chain_api.set_digitizer_param("both", "gain_db", 1.0),
+     "must be 'dac' or 'adc'"),
+    (lambda: chain_api.set_digitizer_param("dac", "nonsense", 1.0),
+     "no parameter"),
+    (lambda: chain_api.set_digitizer_param("dac", "carrier_power_dbm", 500.0),
+     "above the maximum"),
+    (lambda: chain_api.set_name("   "), "a chain needs a name"),
+    (lambda: chain_api.set_description(None), "description must be a string"),
+    (lambda: chain_api.set_metadata([{"cooldown": 12}]),
+     "metadata must be an object"),
+    (lambda: chain_api.set_metadata({12: "cooldown"}),
+     "metadata keys must be strings"),
 ])
 def test_failures_come_back_as_data(call, fragment):
     """
@@ -242,6 +493,22 @@ def test_failures_come_back_as_data(call, fragment):
     result = call()
     assert result["ok"] is False
     assert fragment in result["error"]
+    assert roundtrips(result)
+
+
+def test_editing_a_converter_the_chain_does_not_have_is_reported():
+    """A new chain has no converters, and the browser can still ask."""
+    chain_api.new_chain("Bare")
+    result = chain_api.set_digitizer_param("dac", "carrier_power_dbm", -10.0)
+    assert result["ok"] is False
+    assert "this chain has no DAC" in result["error"]
+
+
+def test_a_budget_on_an_empty_chain_is_reported_not_raised():
+    chain_api.new_chain("Bare")
+    result = chain_api.budget(0, "input", CARRIER, SPECTRAL)
+    assert result["ok"] is False
+    assert "cannot resolve" in result["error"]
     assert roundtrips(result)
 
 

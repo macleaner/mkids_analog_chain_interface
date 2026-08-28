@@ -80,6 +80,13 @@ modules a notebook imports; see [`web/README.md`](web/README.md) for how, and
 menu. The page fetches its Python runtime from a CDN the first time it is
 opened, and is cached after that.
 
+It opens on a preset, but **new chain** starts an empty one you build up from
+the component library and the **Converters** selects, name stage by stage, and
+download as a chain file — the same format everything else here reads. Clicking
+the chain name in the top bar edits the record that file carries: its name,
+free-text notes, and a JSON `metadata` object for whatever ties the chain to
+the measurement it describes.
+
 ### Basic Example
 
 ```python

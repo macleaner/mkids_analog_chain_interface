@@ -34,12 +34,15 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 import registry
+from component import ADCComponent, DACComponent
 from signal_chain import SignalChain
 from utils import to_dbm
 
 __all__ = [
     "catalog", "presets", "load_preset", "new_chain", "describe",
     "add_component", "remove_component", "set_param", "set_label",
+    "set_digitizer", "set_digitizer_param",
+    "set_name", "set_description", "set_metadata",
     "budget", "sweep_gain", "sweep_noise", "to_json", "from_json", "provenance",
 ]
 
@@ -83,6 +86,24 @@ def _guard(fn):
 # --------------------------------------------------------------------------
 # catalog - the component library, straight from the registry
 # --------------------------------------------------------------------------
+def _role_of(cls) -> str:
+    """
+    Where a registered component belongs in a chain: ``dac``, ``adc`` or
+    ``component``.
+
+    Converters are endpoints - they are installed with
+    :func:`set_digitizer`, not appended - so a view has to be able to tell them
+    apart. Taking that from the class hierarchy rather than from the category
+    name or a list of type ids means a newly registered converter is classified
+    correctly without anything here being updated.
+    """
+    if issubclass(cls, DACComponent):
+        return "dac"
+    if issubclass(cls, ADCComponent):
+        return "adc"
+    return "component"
+
+
 @_guard
 def catalog() -> Dict[str, Any]:
     """
@@ -94,6 +115,10 @@ def catalog() -> Dict[str, Any]:
     :func:`add_component` or :func:`set_param`, which validate them with the
     same ``ParamSpec.validate`` the Qt panel uses - so the constraints and the
     error messages are declared exactly once, in ``registry.py``.
+
+    ``role`` says which call installs the entry: ``component`` ones are
+    appended with :func:`add_component`, while ``dac``/``adc`` ones are chain
+    endpoints and go in through :func:`set_digitizer`.
     """
     categories = []
     for category, entries in registry.by_category().items():
@@ -103,6 +128,7 @@ def catalog() -> Dict[str, Any]:
                 "type_id": entry.type_id,
                 "label": entry.label,
                 "doc": entry.doc,
+                "role": _role_of(entry.cls),
                 "params": [{
                     "name": spec.name,
                     "label": spec.display_label,
@@ -175,7 +201,14 @@ def load_preset(key: str) -> Dict[str, Any]:
 
 @_guard
 def new_chain(name: str = "New Chain") -> Dict[str, Any]:
-    """Discard the current chain and start an empty one."""
+    """
+    Discard the current chain and start an empty one.
+
+    Empty means no components *and* no converters: build it up with
+    :func:`add_component` and :func:`set_digitizer`. Until there is at least
+    one stage the chain has no planes, so :func:`budget` has nothing to refer
+    to and says so.
+    """
     global _CHAIN
     _CHAIN = SignalChain(name=name)
     return _describe()
@@ -193,13 +226,20 @@ def _describe() -> Dict[str, Any]:
     ``component_index`` is the index into ``chain.components`` that
     :func:`set_param` and :func:`remove_component` take. They differ by the DAC
     offset, so both are reported rather than left for the caller to infer.
+
+    ``component_index`` is None only for the installed converters, which have
+    no index because they are set as the digitizer rather than appended - those
+    are edited through :func:`set_digitizer_param`. The test is identity with
+    ``chain.dac``/``chain.adc``, not the stage's kind: a converter that was
+    appended to ``components`` instead *does* have an index, and reporting it
+    as None would leave it in the chain with no way to edit or remove it.
     """
     stages = _CHAIN.stages()
     offset = 1 if _CHAIN.dac is not None else 0
     out_stages = []
     for i, (label, component, kind) in enumerate(stages):
         component_index = i - offset
-        if kind in ("dac", "adc"):
+        if component is _CHAIN.dac or component is _CHAIN.adc:
             component_index = None
         out_stages.append({
             "stage_index": i,
@@ -216,9 +256,22 @@ def _describe() -> Dict[str, Any]:
         for at in ("input", "output"):
             planes.append({"reference": label, "at": at, "kind": kind,
                            "display": f"{label} ({at})", "stage_index": i})
+
+    # Reported separately as well as in `stages`, so a view can render the
+    # digitizer control from state rather than by inferring it from stage kinds.
+    digitizer = {
+        role: None if component is None else {
+            "label": component.name,
+            "type_id": getattr(component, "type_id", None),
+            "params": component.params,
+        }
+        for role, component in (("dac", _CHAIN.dac), ("adc", _CHAIN.adc))
+    }
     return {"name": _CHAIN.name, "description": _CHAIN.description,
+            "metadata": dict(_CHAIN.metadata),
             "stages": out_stages, "planes": planes,
             "n_components": len(_CHAIN.components),
+            "digitizer": digitizer,
             "has_digitizer": _CHAIN.dac is not None and _CHAIN.adc is not None}
 
 
@@ -257,19 +310,15 @@ def remove_component(component_index: int) -> Dict[str, Any]:
     return _describe()
 
 
-@_guard
-def set_param(component_index: int, name: str, value: Any) -> Dict[str, Any]:
+def _with_param(existing, name: str, value: Any):
     """
-    Change one parameter by rebuilding the component from its recorded params.
+    A copy of ``existing`` with one parameter changed.
 
     Rebuilding rather than assigning to an attribute is deliberate: several
     models precompute interpolators in ``__init__`` from the parameters they
     were given, so mutating an attribute afterwards would leave those stale.
     Going back through ``registry.create`` also re-runs validation.
     """
-    if not 0 <= component_index < len(_CHAIN.components):
-        raise IndexError(f"component index {component_index} out of range")
-    existing = _CHAIN.components[component_index]
     type_id = getattr(existing, "type_id", None)
     if type_id is None:
         raise TypeError(f"{type(existing).__name__} is not registered")
@@ -277,8 +326,16 @@ def set_param(component_index: int, name: str, value: Any) -> Dict[str, Any]:
     if name not in params and name not in {s.name for s in registry.resolve(type_id).params}:
         raise KeyError(f"{type_id} has no parameter {name!r}")
     params[name] = value
-    _CHAIN.components[component_index] = registry.create(
-        type_id, params, name=existing.name)
+    return registry.create(type_id, params, name=existing.name)
+
+
+@_guard
+def set_param(component_index: int, name: str, value: Any) -> Dict[str, Any]:
+    """Change one parameter of an appended component."""
+    if not 0 <= component_index < len(_CHAIN.components):
+        raise IndexError(f"component index {component_index} out of range")
+    _CHAIN.components[component_index] = _with_param(
+        _CHAIN.components[component_index], name, value)
     return _describe()
 
 
@@ -294,6 +351,120 @@ def set_label(component_index: int, label: str) -> Dict[str, Any]:
     _CHAIN.labels = {existing: idx for existing, idx in _CHAIN.labels.items()
                      if idx != component_index}
     _CHAIN.labels[label] = component_index
+    return _describe()
+
+
+# --------------------------------------------------------------------------
+# the record - what a saved chain says about itself
+# --------------------------------------------------------------------------
+# name, description and metadata are persisted by the file format and are not
+# derivable from the components, so a chain built anywhere but here would carry
+# them and one built in a view without them would not. They are as much of the
+# record as the hardware is: what cooldown, whose sample, which dataset.
+@_guard
+def set_name(name: str) -> Dict[str, Any]:
+    """
+    Rename the chain. This is the title a saved file carries and what
+    :func:`to_json` builds its suggested filename from, so an empty name is
+    refused rather than silently producing ``.json``.
+    """
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("a chain needs a name")
+    _CHAIN.name = name.strip()
+    return _describe()
+
+
+@_guard
+def set_description(description: str) -> Dict[str, Any]:
+    """
+    Set the chain's free-text notes - what this chain corresponds to, in
+    whatever words are useful. Empty is allowed; it means no notes.
+    """
+    if not isinstance(description, str):
+        raise TypeError(f"description must be a string, got "
+                        f"{type(description).__name__}")
+    _CHAIN.description = description
+    return _describe()
+
+
+@_guard
+def set_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Replace the chain's bookkeeping fields (cooldown id, sample, dataset path,
+    operator...). The whole mapping is replaced, not merged, so removing a
+    field is possible.
+
+    It is persisted verbatim, which means it has to survive ``json.dumps`` -
+    checked here rather than at save time, because a chain that cannot be
+    written is a record that has already been lost.
+    """
+    if not isinstance(metadata, dict):
+        raise TypeError(f"metadata must be an object, got "
+                        f"{type(metadata).__name__}")
+    bad_keys = [key for key in metadata if not isinstance(key, str)]
+    if bad_keys:
+        raise TypeError(f"metadata keys must be strings; got {bad_keys!r}")
+    json.dumps(metadata)                     # raises on anything unwritable
+    _CHAIN.metadata = dict(metadata)
+    return _describe()
+
+
+# --------------------------------------------------------------------------
+# digitizer - the chain's converter endpoints
+# --------------------------------------------------------------------------
+def _converter(role: str, type_id: Optional[str],
+               params: Optional[Dict[str, Any]]):
+    """Build one converter for ``role``, or None to leave that end open."""
+    if type_id is None:
+        return None
+    entry = registry.resolve(type_id)
+    actual = _role_of(entry.cls)
+    if actual != role:
+        raise TypeError(f"{type_id} registers as {actual!r}, so it cannot be "
+                        f"the chain's {role.upper()}")
+    return registry.create(type_id, params or {})
+
+
+@_guard
+def set_digitizer(dac_type_id: Optional[str] = None,
+                  adc_type_id: Optional[str] = None,
+                  dac_params: Optional[Dict[str, Any]] = None,
+                  adc_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    Install the chain's converters, replacing whatever was there.
+
+    Both ends are set together, because that is what ``SignalChain`` stores:
+    the DAC goes before every component and the ADC after all of them, so
+    neither has a component index. Passing None for a type id leaves that end
+    open, and ``set_digitizer()`` with no arguments removes both.
+
+    Omitted params fall back to the registry defaults - nothing is carried over
+    from the converter being replaced. A caller changing one end therefore
+    passes the other end's current params (``describe()["digitizer"]`` reports
+    them) rather than relying on a guess here about what survives a swap.
+    """
+    _CHAIN.set_digitizer(_converter("dac", dac_type_id, dac_params),
+                         _converter("adc", adc_type_id, adc_params))
+    return _describe()
+
+
+@_guard
+def set_digitizer_param(role: str, name: str, value: Any) -> Dict[str, Any]:
+    """
+    Change one parameter of an installed converter, e.g. the DAC's carrier
+    power. This is :func:`set_param` for the two stages that have no component
+    index.
+    """
+    if role not in ("dac", "adc"):
+        raise ValueError(f"role must be 'dac' or 'adc', got {role!r}")
+    existing = _CHAIN.dac if role == "dac" else _CHAIN.adc
+    if existing is None:
+        raise ValueError(f"this chain has no {role.upper()}")
+    rebuilt = _with_param(existing, name, value)
+    if role == "dac":
+        _CHAIN.set_digitizer(rebuilt, _CHAIN.adc)
+    else:
+        _CHAIN.set_digitizer(_CHAIN.dac, rebuilt)
     return _describe()
 
 
@@ -411,16 +582,28 @@ def sweep_noise(carrier_hz: float, start_hz: float, stop_hz: float,
 # --------------------------------------------------------------------------
 # round trip
 # --------------------------------------------------------------------------
+def _suggested_filename(name: str) -> str:
+    """
+    A chain's name as a filename. Spaces become underscores, and so does
+    anything else that is not a letter, digit, dash or dot - a name is free
+    text a user typed, and ``Cooldown 12/A`` must not turn into a path.
+    """
+    safe = "".join(char if (char.isalnum() or char in "-_.") else "_"
+                   for char in name.strip())
+    return f"{safe.lower() or 'chain'}.json"
+
+
 @_guard
 def to_json(indent: int = 2) -> Dict[str, Any]:
     """
     The chain as the JSON a notebook reloads with ``SignalChain.load``.
 
     This is what makes the browser build a record and not just a view: what it
-    hands back is the same file format, produced by the same ``to_dict``.
+    hands back is the same file format, produced by the same ``to_dict`` - so
+    the name, description and metadata set here are in it too.
     """
     return {"json": json.dumps(_CHAIN.to_dict(), indent=int(indent)),
-            "suggested_filename": f"{_CHAIN.name.replace(' ', '_').lower()}.json"}
+            "suggested_filename": _suggested_filename(_CHAIN.name)}
 
 
 @_guard

@@ -26,9 +26,10 @@ button{font:inherit;color:var(--ink);background:var(--panel2);
 button:hover{border-color:var(--ink3)}
 button.primary{background:var(--accent);border-color:var(--accent);color:#1a1a1a;font-weight:600}
 button.on{border-color:var(--accent);color:var(--accent)}
-input,select{font:inherit;color:var(--ink);background:var(--bg);
+input,select,textarea{font:inherit;color:var(--ink);background:var(--bg);
   border:1px solid var(--line);border-radius:4px;padding:3px 6px;width:100%}
-input:focus,select:focus{outline:none;border-color:var(--accent2)}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent2)}
+textarea{resize:vertical;line-height:1.45}
 
 #boot{position:fixed;inset:0;z-index:99;display:flex;align-items:center;
   justify-content:center;flex-direction:column;gap:14px;background:var(--bg)}
@@ -42,7 +43,17 @@ input:focus,select:focus{outline:none;border-color:var(--accent2)}
   border-bottom:1px solid var(--line);background:var(--panel)}
 #top .brand{font-weight:600;letter-spacing:.04em}
 #top .brand b{color:var(--accent)}
-#chainname{font-family:var(--mono);font-size:12px;color:var(--ink2)}
+#chainname{font-family:var(--mono);font-size:12px;color:var(--ink2);
+  cursor:pointer;border-bottom:1px dotted var(--ink3);padding-bottom:1px}
+#chainname:hover{color:var(--ink);border-bottom-color:var(--accent)}
+#record{display:none;margin:9px 13px;padding:10px 12px;border-radius:6px;
+  background:var(--panel);border:1px solid var(--line)}
+#record.open{display:block}
+#record .rrow{display:grid;grid-template-columns:104px 1fr;gap:9px;
+  align-items:start;margin-bottom:7px;font-size:12px}
+#record .rrow>label{padding-top:4px}
+#record textarea{font-family:var(--mono);font-size:11px}
+#record .doc{margin-top:0}
 #top .spacer{flex:1}
 #stamp{font-family:var(--mono);font-size:10px;color:var(--ink3);text-align:right;line-height:1.4}
 
@@ -118,14 +129,30 @@ tr.dom td{color:var(--accent)}
 
 <div id="top">
   <span class="brand"><b>t0</b>.technology</span>
-  <span id="chainname">—</span>
+  <span id="chainname" title="edit the chain's name, notes and metadata">—</span>
   <div class="spacer"></div>
+  <button id="btnNew">new chain</button>
   <button id="btnPreset">load preset</button>
   <button id="btnUpload">open chain…</button>
   <button id="btnDownload" class="primary">download chain.json</button>
   <span id="stamp"></span>
 </div>
 <input type="file" id="fileJson" accept=".json" hidden>
+
+<div id="record">
+  <div class="rrow"><label for="recName">name</label>
+    <input id="recName"></div>
+  <div class="rrow"><label for="recDesc">description</label>
+    <textarea id="recDesc" rows="2"
+      placeholder="what this chain is — a cooldown, a deployment, a measurement run"></textarea></div>
+  <div class="rrow"><label for="recMeta">metadata</label>
+    <textarea id="recMeta" rows="4" spellcheck="false"
+      placeholder='{"cooldown": 12, "sample": "QD-7", "dataset": "/data/run3"}'></textarea></div>
+  <p class="doc">Saved with the chain, and not derivable from the components.
+    <b>metadata</b> is a free-form JSON object — whatever bookkeeping ties this
+    chain to the measurement it describes.</p>
+</div>
+
 <div id="err"></div>
 
 <div id="grid">
@@ -136,6 +163,8 @@ tr.dom td{color:var(--accent)}
 
   <section>
     <h1>Signal chain</h1>
+    <div id="digi"></div>
+    <h2>Stages</h2>
     <div id="stages"></div>
   </section>
 
@@ -231,7 +260,7 @@ function call(fn, ...args){
    round trip. It is never the source of truth and is never edited in place -
    every mutation goes through `call` and replaces this wholesale.            */
 let CHAIN = null, CATALOG = null;
-let selected = null;          // component_index of the open stage editor
+let selected = null;          // stageKey() of the open stage editor
 let unitCol = 'contribution_dBm_per_hz';
 let showContrib = false;
 let gainPlot = null, noisePlot = null;
@@ -298,30 +327,32 @@ async function boot(){
   }
 }
 
-/* ===================== component library ===================== */
+/* ===================== component library =====================
+   Only role 'component' entries are appended. Converters are chain endpoints -
+   Python installs them with set_digitizer, not add_component - so they are
+   offered by the digitizer control instead. The role comes from the catalog,
+   which derives it from the class hierarchy, so a newly registered converter
+   lands in the right place without a type id listed here.                    */
 function renderLibrary(){
   const host = $('lib');
   host.innerHTML = '';
   for (const group of CATALOG.categories){
+    const items = group.components.filter(item => item.role === 'component');
+    if (!items.length) continue;
     const box = document.createElement('div');
     box.className = 'cat';
     const head = document.createElement('div');
     head.className = 'h';
     head.textContent = group.category;
     box.appendChild(head);
-    for (const item of group.components){
+    for (const item of items){
       const btn = document.createElement('button');
       btn.className = 'lib';
       btn.textContent = item.label;
       btn.title = item.doc || item.type_id;
       btn.onclick = guard(() => {
-        // Defaults come from the registry, so an added component is always
-        // constructible; the user edits it afterwards in the stage panel.
-        const params = {};
-        for (const spec of item.params)
-          if (spec.default !== null) params[spec.name] = spec.default;
-        CHAIN = call('add_component', item.type_id, params, null);
-        selected = CHAIN.n_components - 1;
+        CHAIN = call('add_component', item.type_id, defaultParams(item), null);
+        selected = 'c' + (CHAIN.n_components - 1);
         renderAll();
       });
       box.appendChild(btn);
@@ -337,15 +368,116 @@ function specsFor(typeId){
   return null;
 }
 
+/* Every catalog entry that fills one end of the chain. */
+function convertersFor(role){
+  const out = [];
+  for (const group of CATALOG.categories)
+    for (const item of group.components)
+      if (item.role === role) out.push(item);
+  return out;
+}
+
+/* Defaults come from the registry, so anything the library or the digitizer
+   control installs is constructible; the user edits it afterwards. */
+function defaultParams(item){
+  const params = {};
+  for (const spec of item.params)
+    if (spec.default !== null) params[spec.name] = spec.default;
+  return params;
+}
+
+/* ===================== digitizer =====================
+   The DAC and the ADC are one setting, because that is what SignalChain
+   stores: both ends go in together and neither has a component index. The API
+   deliberately carries nothing over from the converter it replaces, so
+   changing one end here resends the other end's current params - the view is
+   what decides an untouched end keeps its settings.                          */
+function applyDigitizer(change){
+  const now = {...CHAIN.digitizer, ...change};
+  CHAIN = call('set_digitizer',
+               now.dac ? now.dac.type_id : null,
+               now.adc ? now.adc.type_id : null,
+               now.dac ? now.dac.params : null,
+               now.adc ? now.adc.params : null);
+}
+
+function renderDigitizer(){
+  const host = $('digi');
+  host.innerHTML = '';
+  const head = document.createElement('h2');
+  head.textContent = 'Converters';
+  host.appendChild(head);
+
+  for (const role of ['dac', 'adc']){
+    const row = document.createElement('div');
+    row.className = 'ctl';
+    const lab = document.createElement('label');
+    lab.textContent = role.toUpperCase() + (role === 'dac' ? ' (input)' : ' (output)');
+    const sel = document.createElement('select');
+    const none = document.createElement('option');
+    none.value = '';
+    none.textContent = '— none —';
+    sel.appendChild(none);
+    for (const item of convertersFor(role)){
+      const opt = document.createElement('option');
+      opt.value = item.type_id;
+      opt.textContent = item.label;
+      opt.title = item.doc || item.type_id;
+      sel.appendChild(opt);
+    }
+    const current = CHAIN.digitizer[role];
+    sel.value = current ? current.type_id : '';
+    sel.onchange = guard(() => {
+      const item = sel.value ? specsFor(sel.value) : null;
+      // A swap starts from the registry defaults; the other end is preserved.
+      applyDigitizer({[role]: item ? {type_id: item.type_id,
+                                      params: defaultParams(item)} : null});
+      selected = null;
+      renderAll();
+    });
+    row.append(lab, sel);
+    host.appendChild(row);
+  }
+}
+
+/* ===================== the record =====================
+   The name, notes and metadata are part of the saved file and cannot be
+   recovered from the components, so a chain built here has to be able to carry
+   them. Metadata is edited as JSON rather than as key/value rows because it is
+   stored verbatim: a row editor would turn every value into a string, and a
+   cooldown id silently becoming "12" is the kind of quiet substitution that
+   makes a record stop matching what it documents.                            */
+function renderRecord(){
+  $('recName').value = CHAIN.name;
+  $('recDesc').value = CHAIN.description || '';
+  $('recMeta').value = JSON.stringify(CHAIN.metadata || {}, null, 2);
+}
+
 /* ===================== chain view ===================== */
+/* A stage is addressed either by component index or, for the two installed
+   converters, by role - they have no index. One key covers both. */
+function stageKey(stage){
+  return stage.component_index === null ? stage.kind : 'c' + stage.component_index;
+}
+
 function renderStages(){
   const host = $('stages');
   host.innerHTML = '';
   $('chainname').textContent = CHAIN.name;
 
+  if (!CHAIN.stages.length){
+    const empty = document.createElement('p');
+    empty.className = 'doc';
+    empty.textContent = 'Empty chain — add components from the library, '
+                      + 'and pick converters above.';
+    host.appendChild(empty);
+    return;
+  }
+
   for (const stage of CHAIN.stages){
+    const key = stageKey(stage);
     const card = document.createElement('div');
-    card.className = 'stage' + (stage.component_index === selected && selected !== null ? ' sel' : '');
+    card.className = 'stage' + (key === selected ? ' sel' : '');
 
     const head = document.createElement('div');
     head.className = 'hd';
@@ -355,27 +487,24 @@ function renderStages(){
       `<span class="sp"></span>`;
     head.querySelector('.lbl').textContent = stage.label;
     head.onclick = () => {
-      // Converters have no component_index - they are set as the digitizer,
-      // not appended, so they are shown but not editable here.
-      selected = (stage.component_index === null || stage.component_index === selected)
-        ? null : stage.component_index;
+      selected = key === selected ? null : key;
       renderStages();
     };
     card.appendChild(head);
 
-    if (stage.component_index !== null){
-      const del = document.createElement('button');
-      del.textContent = '×';
-      del.title = 'remove';
-      del.style.padding = '1px 7px';
-      del.onclick = guard(ev => {
-        ev.stopPropagation();
-        CHAIN = call('remove_component', stage.component_index);
-        selected = null;
-        renderAll();
-      });
-      head.appendChild(del);
-    }
+    const del = document.createElement('button');
+    del.textContent = '×';
+    del.title = stage.component_index === null
+      ? 'remove this converter' : 'remove';
+    del.style.padding = '1px 7px';
+    del.onclick = guard(ev => {
+      ev.stopPropagation();
+      if (stage.component_index === null) applyDigitizer({[stage.kind]: null});
+      else CHAIN = call('remove_component', stage.component_index);
+      selected = null;
+      renderAll();
+    });
+    head.appendChild(del);
 
     const spec = specsFor(stage.type_id);
     const body = document.createElement('div');
@@ -385,6 +514,26 @@ function renderStages(){
       doc.className = 'doc';
       doc.textContent = spec.doc.split('\n')[0];
       body.appendChild(doc);
+    }
+    // The label is how a budget names this stage and how the saved file
+    // records it, so a chain built from scratch - where every label is
+    // auto-generated - needs it editable. Converters are named by their model.
+    if (stage.component_index !== null){
+      const row = document.createElement('div');
+      row.className = 'prow';
+      const lab = document.createElement('label');
+      lab.innerHTML = 'label <span class="u">name</span>';
+      lab.title = 'Used to refer a budget to this stage, and saved with the chain.';
+      const input = document.createElement('input');
+      input.value = stage.label;
+      input.onchange = guard(() => {
+        // Re-render either way: a rejected rename must not leave the input
+        // showing a name the chain does not have.
+        try { CHAIN = call('set_label', stage.component_index, input.value.trim()); }
+        finally { renderAll(); }
+      });
+      row.append(lab, input);
+      body.appendChild(row);
     }
     if (spec && spec.params.length){
       for (const ps of spec.params){
@@ -403,7 +552,9 @@ function renderStages(){
           const value = ps.kind === 'float' ? num(input.value)
                       : ps.kind === 'int' ? parseInt(input.value, 10)
                       : input.value;
-          CHAIN = call('set_param', stage.component_index, ps.name, value);
+          CHAIN = stage.component_index === null
+            ? call('set_digitizer_param', stage.kind, ps.name, value)
+            : call('set_param', stage.component_index, ps.name, value);
           renderAll();
         });
         row.append(lab, input);
@@ -469,6 +620,13 @@ function fmt(value, col){
 }
 
 function renderBudget(){
+  // An empty chain has no stages, so there is no plane to refer a budget to.
+  if (!$('plane').value){
+    $('totals').innerHTML =
+      '<span>no reference plane yet — a budget is referred to a stage</span>';
+    $('rows').innerHTML = '';
+    return;
+  }
   const [reference, at] = JSON.parse($('plane').value);
   const carrier = num($('carrier').value) * 1e9;
   const spectral = num($('spectral').value) * 1e3;
@@ -476,8 +634,8 @@ function renderBudget(){
 
   $('totals').innerHTML =
     `<span>referred to <b>${result.reference}</b></span>` +
-    `<span>total <b>${result.total_dbm_per_hz.toFixed(2)}</b> dBm/Hz</span>` +
-    `<span><b>${result.total_k.toPrecision(4)}</b> K</span>` +
+    `<span>total <b>${fmt(result.total_dbm_per_hz, 'db')}</b> dBm/Hz</span>` +
+    `<span><b>${fmt(result.total_k, 'contribution_K')}</b> K</span>` +
     `<span>dominant <b>${result.dominant || '—'}</b></span>`;
 
   const unitLabel = {contribution_dBm_per_hz:'dBm/Hz', contribution_w_per_hz:'W/Hz',
@@ -567,6 +725,8 @@ function renderNoise(){
 
 /* ===================== orchestration ===================== */
 function renderAll(){
+  renderRecord();
+  renderDigitizer();
   renderStages();
   renderPlanes();
   renderAnalysis();
@@ -597,6 +757,41 @@ $('btnContrib').onclick = guard(() => {
   $('btnContrib').textContent = showContrib ? 'on' : 'off';
   $('btnContrib').classList.toggle('on', showContrib);
   renderNoise();
+});
+
+$('chainname').onclick = () => $('record').classList.toggle('open');
+
+/* Committed on blur like every other field. A rejected name or a description
+   is a single value, so the field is put back to what the chain actually holds
+   - but a rejected metadata edit keeps the text as typed, since re-rendering
+   would throw away a JSON object someone is part way through writing. */
+$('recName').onchange = guard(() => {
+  try { CHAIN = call('set_name', $('recName').value); }
+  finally { renderAll(); }
+});
+$('recDesc').onchange = guard(() => {
+  try { CHAIN = call('set_description', $('recDesc').value); }
+  finally { renderAll(); }
+});
+$('recMeta').onchange = guard(() => {
+  CHAIN = call('set_metadata', JSON.parse($('recMeta').value.trim() || '{}'));
+  renderAll();
+});
+
+/* Naming the chain is part of creating it: the name is what the downloaded
+   file is called and what identifies it once saved, so it is asked for up
+   front rather than left as "New Chain". Cancelling the prompt is also how the
+   current chain is kept - this discards it, and nothing is autosaved. */
+$('btnNew').onclick = guard(() => {
+  const name = prompt('Start a new chain? The current one is discarded — '
+                    + 'download it first if you need it.\n\nName:', 'New Chain');
+  if (name === null) return;
+  CHAIN = call('new_chain', name.trim() || 'New Chain');
+  selected = null;
+  renderAll();
+  // The rest of the record is blank and nothing else will prompt for it, so
+  // open it now, while the chain is being described anyway.
+  $('record').classList.add('open');
 });
 
 $('btnPreset').onclick = guard(() => {

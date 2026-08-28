@@ -93,6 +93,49 @@ go back through `ParamSpec.validate`. The browser panel and the Qt panel
 therefore share one declaration of every parameter's range, unit and error
 message.
 
+## Building a chain in the page
+
+**new chain** asks for a name and empties the chain — no components and no
+converters. From there:
+
+| To | Use |
+|---|---|
+| add a stage | the component library, left column |
+| edit a stage | click it — the card opens with its parameters |
+| name a stage | the `label` field in that card — this is what a budget refers to and what the file records |
+| set the endpoints | the **Converters** selects at the top of the signal chain |
+| set the DAC carrier power | click the **DAC stage** (stage 0) — `Carrier Power` and `Gain` are in its card, like any other stage's parameters |
+| remove an endpoint | its `×`, or its select back to *— none —* |
+| name the chain, or annotate it | click the chain name in the top bar |
+
+Which catalog entries are endpoints is not a list kept here: `catalog()`
+reports a `role` of `dac`, `adc` or `component` per entry, derived from
+`DACComponent`/`ADCComponent`, so a converter registered later is offered by
+the Converters control rather than as an appendable component.
+
+An empty chain has no stages, and therefore no plane a budget can be referred
+to — the table says so instead of erroring, and the sweeps return zero gain and
+zero noise. Nothing is autosaved: **new chain** discards what is on screen, so
+download first.
+
+### The record
+
+Clicking the chain name opens `name`, `description` and `metadata`. None of
+these can be recovered from the components, and all three are in the saved
+file, so a chain built in the page carries the same bookkeeping as one built in
+a notebook — which cooldown, whose sample, which dataset. The panel opens
+itself after **new chain**, since nothing else asks for any of it.
+
+`metadata` is edited as a JSON object rather than as key/value rows, because it
+is persisted verbatim: a row editor would store every value as a string, and a
+cooldown id quietly becoming `"12"` is exactly how a record stops matching what
+it documents. Text that does not parse is left alone for you to fix, and
+`set_metadata` refuses anything `json.dumps` cannot write — the failure lands
+on the edit that caused it rather than on a download months later.
+
+The name is also what the download is called, so it is sanitized into a
+filename: `Cooldown 12/A` gives `cooldown_12_a.json`, never a path.
+
 ## Same code, not the same dependency versions
 
 The wheel asks for `numpy>=1.22` / `scipy>=1.8`; Pyodide supplies whatever it
@@ -129,5 +172,7 @@ version-independent and drop `scipy.optimize` from the runtime path.
   range ([`hardware_models.py:137`](../hardware_models.py#L137)), pre-existing
   and unrelated to this build. `chain_api` maps non-finite to `null` and uPlot
   renders it as a gap.
-- Converters are shown in the chain but not editable — they are set via
-  `set_digitizer`, not appended, so they have no component index.
+- A chain file that loads with warnings loads silently here. `SignalChain.load`
+  records them on `chain.load_warnings` and the Qt GUI shows them in a dialog;
+  the browser drops them, so a file that had a parameter defaulted in looks
+  identical to one that did not.
