@@ -16,6 +16,7 @@ import pytest
 
 import chain_api
 import registry
+from component import PassiveComponent
 from signal_chain import SignalChain
 
 CARRIER = 1.5e9
@@ -264,6 +265,85 @@ def test_set_label_rejects_a_duplicate():
     result = chain_api.set_label(0, "LNA")
     assert not result["ok"]
     assert "already refers to" in result["error"]
+
+
+def test_stages_report_the_model_name_the_library_lists():
+    """
+    A label is free text, so it cannot be relied on to say what a stage is:
+    "CryoCable" could be any of nine cable models. ``type_label`` is the one
+    part of a stage's identity the user does not choose, and it has to be the
+    same string the component library offers, or the chain view and the library
+    would name the same model two different ways.
+    """
+    stages = {s["label"]: s for s in chain_api.describe()["stages"]}
+    assert stages["CryoCable"]["type_label"] == \
+        registry.resolve("cable.sma_ss086_cryo").label
+    assert stages["ColdAtten"]["type_label"] == "Attenuator"
+    assert stages["AD9082_DAC"]["type_label"] == "AD9082 DAC"
+
+
+def test_an_unregistered_component_still_says_what_it_is():
+    """
+    Not every component in a chain came from the registry - a script can append
+    one directly. Its stage still needs a model name, so the class name stands
+    in rather than the view being handed None to render.
+    """
+    class BespokeThing(PassiveComponent):
+        def gain(self, frequency):
+            return 0.0
+
+    chain_api._CHAIN.add_component(BespokeThing(), label="Mystery")
+    stage, = [s for s in chain_api.describe()["stages"]
+              if s["label"] == "Mystery"]
+    assert stage["type_id"] is None
+    assert stage["type_label"] == "BespokeThing"
+
+
+def test_a_component_added_without_a_label_is_named_for_its_family():
+    """
+    Every component needs a label the moment it is added - it is what a budget
+    refers to and what the file records - so the browser adds one with none and
+    gets a generic name back. It is named for the family, not the position:
+    a reorder moves a component and its label together, so a number that meant
+    "third in the chain" would be wrong as soon as anything moved.
+    """
+    result = chain_api.add_component("cable.sma_generic")
+    assert result["ok"], result.get("error")
+    assert result["stages"][-2]["label"] == "Cable1"          # before the ADC
+
+    assert chain_api.add_component("cable.rg58c")["ok"]
+    assert chain_api.add_component("attenuator")["ok"]
+    added = chain_api.add_component("amplifier.zx60_3018g_plus")
+    assert [s["label"] for s in added["stages"]][-5:-1] == [
+        "Cable1", "Cable2", "Attenuator1", "Amplifier1"]
+
+
+def test_a_generated_label_never_collides_with_one_in_use():
+    """
+    Two stages cannot share a label: ``chain.labels`` maps label -> index, so a
+    reused name would silently repoint at the newer component and leave the
+    older one unaddressable. The counter therefore looks at what the chain
+    already has, including names the user typed and gaps left by a removal.
+    """
+    assert chain_api.add_component("attenuator", None, "Attenuator2")["ok"]
+    first = chain_api.add_component("attenuator")
+    assert first["stages"][-2]["label"] == "Attenuator1"
+    second = chain_api.add_component("attenuator")
+    assert second["stages"][-2]["label"] == "Attenuator3"     # 2 is taken
+
+    labels = chain_api._CHAIN.labels
+    assert len(labels) == len(chain_api._CHAIN.components)
+
+    # A removal frees its name for the next component added.
+    assert chain_api.remove_component(labels["Attenuator1"])["ok"]
+    assert chain_api.add_component("attenuator")["stages"][-2]["label"] \
+        == "Attenuator1"
+
+
+def test_an_explicit_label_is_never_overridden():
+    """A generated name is a fallback, not a rename."""
+    result = chain_api.add_component("attenuator", {}, "Mixing_Chamber_Pad")
+    assert result["stages"][-2]["label"] == "Mixing_Chamber_Pad"
 
 
 def test_appended_converter_keeps_a_component_index():

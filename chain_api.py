@@ -218,6 +218,55 @@ def new_chain(name: str = "New Chain") -> Dict[str, Any]:
 # --------------------------------------------------------------------------
 # chain structure
 # --------------------------------------------------------------------------
+def _type_label(component) -> str:
+    """
+    A component's model name as the registry lists it, e.g. ``Attenuator`` or
+    ``SMA generic (room temp)``.
+
+    Anything unregistered - a component a script built directly, or one whose
+    type id a later build dropped - falls back to its class name, so a stage
+    always says what it is rather than showing a blank where its model goes.
+    """
+    type_id = getattr(component, "type_id", None)
+    if type_id is not None:
+        try:
+            return registry.resolve(type_id).label
+        except KeyError:
+            pass
+    return type(component).__name__
+
+
+def _label_stem(type_id: str) -> str:
+    """
+    The family a type id belongs to, capitalized: ``cable.fm_f141`` -> Cable,
+    ``attenuator`` -> Attenuator.
+
+    Taken from the type id rather than the registry's category, because the
+    category is presentation ("Cables") while the id's first segment is what
+    the codebase already uses to group models - so a newly registered cable
+    gets the same stem as every other one without a list here being updated.
+    """
+    family = type_id.split(".")[0]
+    return "".join(word.capitalize() for word in family.split("_")) or "Stage"
+
+
+def _default_label(type_id: str) -> str:
+    """
+    A generic label for a newly added component: Cable1, Attenuator2, and so on
+    - the lowest number that is free for that family.
+
+    A label is how a budget names a stage and how the saved file records it, so
+    every component needs one from the moment it is added. Naming it after its
+    family means the default already says something true about the stage, and
+    the user overwrites it with what the hardware actually is.
+    """
+    stem = _label_stem(type_id)
+    number = 1
+    while f"{stem}{number}" in _CHAIN.labels:
+        number += 1
+    return f"{stem}{number}"
+
+
 def _describe() -> Dict[str, Any]:
     """
     The chain as the view needs to draw it: stages in signal order, plus the
@@ -234,6 +283,11 @@ def _describe() -> Dict[str, Any]:
     ``chain.dac``/``chain.adc``, not the stage's kind: a converter that was
     appended to ``components`` instead *does* have an index, and reporting it
     as None would leave it in the chain with no way to edit or remove it.
+
+    ``type_label`` is the model's name as the library lists it, so a view can
+    show what a stage *is* ("SMA Stainless 0.86mm (cryo)") next to what it is
+    called ("CryoCable"). A label is free text a user chose; the type label is
+    the one thing about a stage that cannot be renamed.
     """
     stages = _CHAIN.stages()
     offset = 1 if _CHAIN.dac is not None else 0
@@ -248,6 +302,7 @@ def _describe() -> Dict[str, Any]:
             "label": label,
             "kind": kind,
             "type_id": getattr(component, "type_id", None),
+            "type_label": _type_label(component),
             "class_name": type(component).__name__,
             "params": component.params,
         })
@@ -289,9 +344,15 @@ def add_component(type_id: str, params: Optional[Dict[str, Any]] = None,
     Append a component. Parameters are validated by the registry, so an
     out-of-range value fails here with the message ``ParamSpec`` declares
     rather than being silently accepted.
+
+    Without a label the component gets a generic one for its family - Cable1,
+    Attenuator2 - rather than ``SignalChain``'s class-and-position default.
+    Position is exactly what a label must not encode: reordering the chain
+    moves the component and its label together, and ``Attenuator_3`` sitting
+    fifth is then a lie about the chain, while ``Attenuator3`` is only a name.
     """
     component = registry.create(type_id, params or {})
-    _CHAIN.add_component(component, label=label)
+    _CHAIN.add_component(component, label=label or _default_label(type_id))
     return _describe()
 
 

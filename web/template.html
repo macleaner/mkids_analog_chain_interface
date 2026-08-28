@@ -81,10 +81,21 @@ textarea{resize:vertical;line-height:1.45}
 .stage>.hd{display:flex;align-items:center;gap:8px;padding:6px 9px;cursor:pointer}
 .stage>.hd:hover{background:var(--panel2)}
 .stage .idx{font-family:var(--mono);font-size:10px;color:var(--ink3);min-width:14px}
-.stage .lbl{font-weight:500}
-.stage .kind{font-family:var(--mono);font-size:9px;padding:1px 5px;border-radius:3px;
-  background:var(--panel2);color:var(--ink3);text-transform:uppercase}
-.stage .kind.dac,.stage .kind.adc{background:#2f3a4d;color:var(--accent2)}
+/* A long model name gives way before the label or the values do: it is the one
+   of the three the card's own body repeats. */
+.stage .lbl{font-weight:500;white-space:nowrap;flex:0 1 auto;
+  overflow:hidden;text-overflow:ellipsis}
+/* The converters are the chain's endpoints and cannot be moved or renamed, so
+   they stay tinted the way their tag used to be. */
+.stage .lbl.dac,.stage .lbl.adc{color:var(--accent2)}
+/* The lopsided shrink factor is what makes the model name give way first: a
+   narrow column ellipsizes it down to a few characters before the label loses
+   any, and the values never shrink at all. */
+.stage .type{font-family:var(--mono);font-size:9px;padding:1px 5px;border-radius:3px;
+  background:var(--panel2);color:var(--ink3);white-space:nowrap;
+  flex:0 9999 auto;min-width:3.5em;overflow:hidden;text-overflow:ellipsis}
+.stage .vals{font-family:var(--mono);font-size:9px;color:var(--ink3);
+  white-space:nowrap;flex:0 0 auto}
 .stage .sp{flex:1}
 /* The drop marker is an inset shadow rather than a border, so showing it does
    not change the card's height and shove the rest of the list around while the
@@ -484,6 +495,36 @@ function stageKey(stage){
   return stage.component_index === null ? stage.kind : 'c' + stage.component_index;
 }
 
+/* The values that separate two stages of the same model - a 20 dB pad from a
+   10 dB one, a 0.5 m cable from a 3 m one - so a chain reads without opening
+   every card. Units come from the catalog, the same declaration the editor
+   labels its inputs with, and the numbers are Python's, unrounded. */
+function stageValues(stage){
+  const spec = specsFor(stage.type_id);
+  if (!spec) return '';
+  const parts = [];
+  for (const ps of spec.params){
+    const value = stage.params[ps.name];
+    if (value === undefined || value === null) continue;
+    parts.push(ps.unit ? `${value} ${ps.unit}` : `${value}`);
+  }
+  return parts.join(' · ');
+}
+
+/* What a stage is, beside what it is called. The model name is dropped when the
+   label is already that name - the converters are named after their model, so
+   "AD9082_DAC [AD9082 DAC]" would be the same word twice. */
+function fillIdentity(stage, head){
+  const plain = text => text.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const type = head.querySelector('.type');
+  if (plain(stage.label) === plain(stage.type_label)) type.remove();
+  else {
+    type.textContent = stage.type_label;
+    type.title = stage.type_id || stage.class_name;
+  }
+  head.querySelector('.vals').textContent = stageValues(stage);
+}
+
 /* ===================== reordering =====================
    Only appended components move. The installed converters are the chain's
    endpoints - Python keeps them outside `components` and puts them at the ends
@@ -645,9 +686,11 @@ function renderStages(){
       `<span class="idx">${stage.stage_index}</span>` +
       (movable ? `<span class="grip" title="drag to reorder">⋮⋮</span>`
                : `<span class="grip nodrag" aria-hidden="true">⋮⋮</span>`) +
-      `<span class="lbl"></span><span class="kind ${stage.kind}">${stage.kind}</span>` +
+      `<span class="lbl ${stage.kind}"></span><span class="type"></span>` +
+      `<span class="vals"></span>` +
       `<span class="sp"></span>`;
     head.querySelector('.lbl').textContent = stage.label;
+    fillIdentity(stage, head);
     head.onclick = () => {
       selected = key === selected ? null : key;
       renderStages();

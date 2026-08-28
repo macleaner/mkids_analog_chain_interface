@@ -103,11 +103,26 @@ converters. From there:
 | add a stage | double-click it in the component library, left column |
 | edit a stage | click it — the card opens with its parameters |
 | name a stage | the `label` field in that card — this is what a budget refers to and what the file records |
+| tell two stages apart | each row reads *label · model · values* — `ColdAtten` `Attenuator` `-20 dB · 4 K` |
 | reorder a stage | drag it by the `⋮⋮` handle, or use the `▲▼` that appear on the stage you are pointing at |
 | set the endpoints | the **Converters** selects at the top of the signal chain |
 | set the DAC carrier power | click the **DAC stage** (stage 0) — `Carrier Power` and `Gain` are in its card, like any other stage's parameters |
 | remove an endpoint | its `×`, or its select back to *— none —* |
 | name the chain, or annotate it | click the chain name in the top bar |
+
+A stage row says what the stage is called, what model it is, and the values
+that separate it from another stage of the same model — the three things you
+would otherwise have to open every card to see. The model name comes from
+`describe()`'s `type_label`, the same string the library lists, and it is
+dropped where the label already is that name: the converters are named after
+their model, so stage 0 reads `AD9082_DAC`, not `AD9082_DAC [AD9082 DAC]`.
+
+A component added without a label gets a generic one for its family — `Cable1`,
+`Attenuator2`, the lowest number free for that family — because a label is what
+a budget refers to and what the file records, so a stage cannot go without one.
+The number is not a position: reordering moves a component and its label
+together, so `Attenuator3` sitting fifth is a name, not a claim about where it
+is. Rename it in the card to whatever the hardware actually is.
 
 Only appended components can be reordered. The converters are the chain's
 endpoints — `SignalChain` keeps them outside `components` and puts them at the
