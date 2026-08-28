@@ -40,7 +40,8 @@ from utils import to_dbm
 
 __all__ = [
     "catalog", "presets", "load_preset", "new_chain", "describe",
-    "add_component", "remove_component", "set_param", "set_label",
+    "add_component", "remove_component", "move_component",
+    "set_param", "set_label",
     "set_digitizer", "set_digitizer_param",
     "set_name", "set_description", "set_metadata",
     "budget", "sweep_gain", "sweep_noise", "to_json", "from_json", "provenance",
@@ -307,6 +308,36 @@ def remove_component(component_index: int) -> Dict[str, Any]:
     _CHAIN.labels = {label: (idx - 1 if idx > component_index else idx)
                      for label, idx in _CHAIN.labels.items()
                      if idx != component_index}
+    return _describe()
+
+
+@_guard
+def move_component(component_index: int, to_index: int) -> Dict[str, Any]:
+    """
+    Move ``chain.components[component_index]`` to position ``to_index``.
+
+    ``to_index`` is the position the component ends up at *after* it has been
+    lifted out, which is what "drop it here" means in a list: moving 0 to 3 in
+    a four-component chain leaves it last, and no index is ever out of range
+    for a chain that has one.
+
+    A move renumbers components without changing which component any label
+    names, so ``chain.labels`` is rewritten through the same permutation. A
+    budget taken by label therefore refers to the same hardware before and
+    after - only its position in the cascade changed, which is the whole point.
+    """
+    count = len(_CHAIN.components)
+    for name, index in (("component_index", component_index), ("to_index", to_index)):
+        if not 0 <= index < count:
+            raise IndexError(f"{name} {index} out of range "
+                             f"(chain has {count} components)")
+    order = list(range(count))
+    order.insert(to_index, order.pop(component_index))
+    _CHAIN.components = [_CHAIN.components[old] for old in order]
+    # order[new] == old, and labels are stored the other way round.
+    moved_to = {old: new for new, old in enumerate(order)}
+    _CHAIN.labels = {label: moved_to.get(index, index)
+                     for label, index in _CHAIN.labels.items()}
     return _describe()
 
 

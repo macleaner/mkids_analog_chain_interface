@@ -103,10 +103,19 @@ converters. From there:
 | add a stage | double-click it in the component library, left column |
 | edit a stage | click it — the card opens with its parameters |
 | name a stage | the `label` field in that card — this is what a budget refers to and what the file records |
+| reorder a stage | drag it by the `⋮⋮` handle, or use the `▲▼` that appear on the stage you are pointing at |
 | set the endpoints | the **Converters** selects at the top of the signal chain |
 | set the DAC carrier power | click the **DAC stage** (stage 0) — `Carrier Power` and `Gain` are in its card, like any other stage's parameters |
 | remove an endpoint | its `×`, or its select back to *— none —* |
 | name the chain, or annotate it | click the chain name in the top bar |
+
+Only appended components can be reordered. The converters are the chain's
+endpoints — `SignalChain` keeps them outside `components` and puts them at the
+ends of every stage list — so dropping a stage on the DAC card means "first" and
+on the ADC card means "last", rather than moving the converter. A reorder
+renumbers components, so `move_component` rewrites `chain.labels` through the
+same permutation: a label names a component, not a position, and a budget taken
+by label refers to the same hardware before and after the move.
 
 Which catalog entries are endpoints is not a list kept here: `catalog()`
 reports a `role` of `dac`, `adc` or `component` per entry, derived from

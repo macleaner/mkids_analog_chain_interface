@@ -185,6 +185,81 @@ def test_remove_component_reindexes_labels():
     assert labels["InputAtten"] == 0                          # unmoved
 
 
+def test_move_component_reorders_and_carries_its_label_along():
+    """
+    A label names a component, not a position, so a move has to renumber
+    ``chain.labels`` through the same permutation. If it does not, a budget
+    taken by label silently starts describing whichever component slid into the
+    old slot - the same failure as a mis-reindexed removal, but harder to see,
+    because the chain still has every stage it did before.
+    """
+    result = chain_api.move_component(3, 4)        # ColdAtten past the LNA
+    assert result["ok"], result.get("error")
+    assert [s["label"] for s in result["stages"]] == [
+        "AD9082_DAC", "InputAtten", "WarmCable_In", "CryoCable",
+        "LNA", "ColdAtten", "ReturnCable", "WarmAmp1", "WarmAmp2", "AD9082_ADC",
+    ]
+    labels = chain_api._CHAIN.labels
+    assert labels["ColdAtten"] == 4 and labels["LNA"] == 3
+    for label, index in labels.items():
+        assert chain_api._CHAIN._get_label_for_index(index) == label
+
+
+def test_moving_a_stage_keeps_the_gain_and_changes_the_noise():
+    """
+    The physics the reorder exists for: cascaded gain is a product and does not
+    care about order, but noise does - an attenuator ahead of the LNA costs
+    noise figure, and the same attenuator behind it barely matters. A reorder
+    that left the budget untouched would mean the move never reached the
+    cascade.
+
+    Referred to the chain output rather than to the LNA, because that plane is
+    the thing being moved: "LNA input" is a different point in the cascade
+    before and after, so a budget taken there mixes the move up with a change
+    of reference. And per source rather than on the total, which this preset's
+    DAC phase noise dominates from upstream of both stages either way.
+    """
+    def contribution(result, source):
+        row, = [r for r in result["rows"] if r["source"] == source]
+        return row["contribution_dBm_per_hz"]
+
+    span = (CARRIER, CARRIER * 1.0001, 2)
+    gain_before = chain_api.sweep_gain(*span)["gain_db"][0]
+    before = chain_api.budget("WarmAmp2", "output", CARRIER, SPECTRAL)
+
+    assert chain_api.move_component(3, 4)["ok"]     # ColdAtten past the LNA
+    after = chain_api.budget("WarmAmp2", "output", CARRIER, SPECTRAL)
+
+    assert chain_api.sweep_gain(*span)["gain_db"][0] == pytest.approx(
+        gain_before, abs=1e-9)
+    # The LNA's own noise now passes through the attenuator's flat 20 dB, and
+    # the attenuator's thermal noise no longer sees the LNA's gain.
+    assert contribution(after, "LNA") == pytest.approx(
+        contribution(before, "LNA") - 20.0, abs=0.1)
+    assert contribution(after, "ColdAtten") < contribution(before, "ColdAtten") - 20
+
+
+def test_moving_a_stage_to_where_it_already_is_changes_nothing():
+    """The browser sends a drop wherever the pointer landed, including back."""
+    before = chain_api.describe()
+    after = chain_api.move_component(2, 2)
+    assert after["ok"], after.get("error")
+    assert after == before
+
+
+def test_a_reordered_chain_saves_in_its_new_order():
+    """
+    The order is the record. A move that only reordered the view would hand
+    back a file describing the chain as it was built rather than as it is.
+    """
+    assert chain_api.move_component(7, 0)["ok"]     # WarmAmp2 to the front
+    saved = json.loads(chain_api.to_json()["json"])
+    reloaded = SignalChain.from_dict(saved)
+    assert [c.name for c in reloaded.components][0] == "WarmAmp2"
+    assert reloaded.labels["WarmAmp2"] == 0
+    assert reloaded.labels["InputAtten"] == 1
+
+
 def test_set_label_rejects_a_duplicate():
     result = chain_api.set_label(0, "LNA")
     assert not result["ok"]
@@ -461,6 +536,8 @@ def test_exported_json_loads_as_a_signal_chain():
     (lambda: chain_api.set_param(0, "attenuation", 500.0), "above the maximum"),
     (lambda: chain_api.set_param(0, "nonsense", 1.0), "no parameter"),
     (lambda: chain_api.remove_component(999), "out of range"),
+    (lambda: chain_api.move_component(0, 999), "to_index 999 out of range"),
+    (lambda: chain_api.move_component(-1, 0), "component_index -1 out of range"),
     (lambda: chain_api.budget("NoSuchPlane", "input", CARRIER, SPECTRAL),
      "cannot resolve"),
     (lambda: chain_api.sweep_gain(1e9, 1e9, 10), "must exceed"),

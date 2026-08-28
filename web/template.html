@@ -86,6 +86,25 @@ textarea{resize:vertical;line-height:1.45}
   background:var(--panel2);color:var(--ink3);text-transform:uppercase}
 .stage .kind.dac,.stage .kind.adc{background:#2f3a4d;color:var(--accent2)}
 .stage .sp{flex:1}
+/* The drop marker is an inset shadow rather than a border, so showing it does
+   not change the card's height and shove the rest of the list around while the
+   pointer is moving over it. */
+.stage.drag{opacity:.45}
+.stage.dropbefore{box-shadow:inset 0 2px 0 var(--accent)}
+.stage.dropafter{box-shadow:inset 0 -2px 0 var(--accent)}
+.stage .grip{font-family:var(--mono);font-size:11px;letter-spacing:-2px;
+  color:var(--ink3);cursor:grab;visibility:hidden;padding-right:2px}
+.stage .mv{visibility:hidden;padding:0 5px;font-size:9px;color:var(--ink3);
+  background:transparent;border-color:transparent}
+/* A stage that cannot be dragged still reserves the handle's width, so the
+   labels line up down the column instead of the converters sitting 28px left
+   of everything else. */
+.stage .grip.nodrag{cursor:default}
+.stage:hover .grip:not(.nodrag),.stage:hover .mv,
+.stage:focus-within .mv{visibility:visible}
+.stage .mv:hover{color:var(--accent);border-color:var(--line);background:var(--panel2)}
+.stage .mv:disabled{color:var(--line);cursor:default}
+.stage .mv:disabled:hover{border-color:transparent;background:transparent;color:var(--line)}
 .stage .body{padding:2px 9px 9px;border-top:1px solid var(--line);display:none}
 .stage.sel .body{display:block}
 .prow{display:grid;grid-template-columns:1fr 92px;gap:7px;align-items:center;
@@ -263,6 +282,7 @@ function call(fn, ...args){
    every mutation goes through `call` and replaces this wholesale.            */
 let CHAIN = null, CATALOG = null;
 let selected = null;          // stageKey() of the open stage editor
+let dragFrom = null;          // component_index being dragged, or null
 let unitCol = 'contribution_dBm_per_hz';
 let showContrib = false;
 let gainPlot = null, noisePlot = null;
@@ -464,6 +484,117 @@ function stageKey(stage){
   return stage.component_index === null ? stage.kind : 'c' + stage.component_index;
 }
 
+/* ===================== reordering =====================
+   Only appended components move. The installed converters are the chain's
+   endpoints - Python keeps them outside `components` and puts them at the ends
+   of every stage list - so there is no position to drag them to, and they act
+   as drop targets meaning "before everything" / "after everything" instead.
+
+   A drop is expressed as a gap in the list (0 = above the first component, n =
+   below the last), because that is what the pointer is over; `move_component`
+   takes the position the component ends up in, which is one less when it is
+   moving down, since it vacates a slot on the way.                            */
+function dropIndex(from, gap){
+  return gap > from ? gap - 1 : gap;
+}
+
+/* Where an index lands after a move, for anything that was addressing a
+   component by position - here, the open editor. */
+function afterMove(index, from, to){
+  if (index === from) return to;
+  if (from < to) return (index > from && index <= to) ? index - 1 : index;
+  return (index >= to && index < from) ? index + 1 : index;
+}
+
+function clearDropMarks(){
+  for (const el of document.querySelectorAll('.stage.dropbefore,.stage.dropafter'))
+    el.classList.remove('dropbefore', 'dropafter');
+}
+
+function moveStage(from, to){
+  if (from === to) return;
+  CHAIN = call('move_component', from, to);
+  // The editor stays open on the component the user was editing, not on
+  // whatever has taken its old position.
+  if (selected && selected[0] === 'c')
+    selected = 'c' + afterMove(parseInt(selected.slice(1), 10), from, to);
+  renderAll();
+}
+
+/* The gap a drop on this card means. A converter has no index of its own, so
+   it stands for the gap at its end of the component list. */
+function gapFor(stage, card, ev){
+  if (stage.component_index === null)
+    return stage.kind === 'dac' ? 0 : CHAIN.n_components;
+  const box = card.getBoundingClientRect();
+  return ev.clientY < box.top + box.height / 2
+    ? stage.component_index : stage.component_index + 1;
+}
+
+function markDrop(stage, card, gap){
+  clearDropMarks();
+  const before = stage.component_index === null
+    ? stage.kind === 'dac' : gap === stage.component_index;
+  card.classList.add(before ? 'dropbefore' : 'dropafter');
+}
+
+/* Cards are drop targets and so is the empty space under them; the card
+   handlers bubble up to the host, which is why the host checks it was the
+   pointer's actual target before treating the drop as "move to the end". */
+function makeDropTarget(stage, card){
+  card.ondragover = ev => {
+    if (dragFrom === null) return;
+    ev.preventDefault();                       // required, or there is no drop
+    ev.dataTransfer.dropEffect = 'move';
+    markDrop(stage, card, gapFor(stage, card, ev));
+  };
+  card.ondragleave = () => card.classList.remove('dropbefore', 'dropafter');
+  card.ondrop = guard(ev => {
+    ev.preventDefault();
+    clearDropMarks();
+    if (dragFrom === null) return;
+    const from = dragFrom;
+    dragFrom = null;
+    moveStage(from, dropIndex(from, gapFor(stage, card, ev)));
+  });
+}
+
+/* The header is the drag handle rather than the whole card: the card holds the
+   parameter inputs, and a draggable ancestor stops you selecting text in them. */
+function makeDragHandle(stage, card, head){
+  head.draggable = true;
+  head.ondragstart = ev => {
+    dragFrom = stage.component_index;
+    card.classList.add('drag');
+    ev.dataTransfer.effectAllowed = 'move';
+    // Firefox refuses to start a drag with nothing on the dataTransfer, even
+    // though the payload here is `dragFrom` - dragover cannot read the data.
+    ev.dataTransfer.setData('text/plain', String(stage.component_index));
+  };
+  head.ondragend = () => {
+    dragFrom = null;
+    card.classList.remove('drag');
+    clearDropMarks();
+  };
+}
+
+function addMoveButtons(stage, head){
+  for (const [glyph, delta, where] of [['▲', -1, 'earlier'],
+                                       ['▼', 1, 'later']]){
+    const to = stage.component_index + delta;
+    const btn = document.createElement('button');
+    btn.className = 'mv';
+    btn.textContent = glyph;
+    btn.disabled = to < 0 || to >= CHAIN.n_components;
+    btn.title = btn.disabled ? '' : `move ${where} in the chain`;
+    btn.onclick = guard(ev => {
+      ev.stopPropagation();                    // not a click on the header
+      moveStage(stage.component_index, to);
+    });
+    head.appendChild(btn);
+  }
+}
+
 function renderStages(){
   const host = $('stages');
   host.innerHTML = '';
@@ -478,6 +609,30 @@ function renderStages(){
     return;
   }
 
+  if (CHAIN.n_components > 1){
+    const hint = document.createElement('p');
+    hint.className = 'doc';
+    hint.style.margin = '0 0 6px';
+    hint.textContent = 'Drag a stage by its handle to reorder it, '
+                     + 'or use ▲▼ on the stage you are pointing at.';
+    host.appendChild(hint);
+  }
+
+  // Dropping below the last card is the same as dropping on the ADC: last.
+  host.ondragover = ev => {
+    if (dragFrom === null || ev.target !== host) return;
+    ev.preventDefault();
+    ev.dataTransfer.dropEffect = 'move';
+    clearDropMarks();
+  };
+  host.ondrop = guard(ev => {
+    if (dragFrom === null || ev.target !== host) return;
+    ev.preventDefault();
+    const from = dragFrom;
+    dragFrom = null;
+    moveStage(from, CHAIN.n_components - 1);
+  });
+
   for (const stage of CHAIN.stages){
     const key = stageKey(stage);
     const card = document.createElement('div');
@@ -485,8 +640,11 @@ function renderStages(){
 
     const head = document.createElement('div');
     head.className = 'hd';
+    const movable = stage.component_index !== null && CHAIN.n_components > 1;
     head.innerHTML =
       `<span class="idx">${stage.stage_index}</span>` +
+      (movable ? `<span class="grip" title="drag to reorder">⋮⋮</span>`
+               : `<span class="grip nodrag" aria-hidden="true">⋮⋮</span>`) +
       `<span class="lbl"></span><span class="kind ${stage.kind}">${stage.kind}</span>` +
       `<span class="sp"></span>`;
     head.querySelector('.lbl').textContent = stage.label;
@@ -495,6 +653,14 @@ function renderStages(){
       renderStages();
     };
     card.appendChild(head);
+
+    // Converters cannot be dragged, but they are still targets: they are the
+    // ends of the chain, so a drop on one means "put this at that end".
+    makeDropTarget(stage, card);
+    if (movable){
+      makeDragHandle(stage, card, head);
+      addMoveButtons(stage, head);
+    }
 
     const del = document.createElement('button');
     del.textContent = '×';
