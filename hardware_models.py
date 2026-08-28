@@ -340,7 +340,21 @@ class ASU_3GHz_LNA(ActiveComponent):
 
 
 class _InterpolatedFilter(PassiveComponent):
-    """Shared implementation for the fixed high-pass filter models."""
+    """
+    Shared implementation for the fixed filter models, high- and low-pass alike.
+
+    ``response`` is the datasheet's tabulated insertion loss, negated into gain.
+    Beyond the tabulated span the endpoint slope is extended, so a chain
+    evaluated where the datasheet is silent gets a usable estimate rather than a
+    NaN that poisons the whole budget. The extension is clamped to keep it
+    physical: never above 0 dB, since a passive filter cannot amplify, and never
+    below the deepest loss the datasheet actually measured, since a linear
+    extension run far enough would otherwise claim absurd rejection. Both bounds
+    are inert inside the tabulated span, where the datasheet still governs.
+
+    Treat extrapolated values as an indication, not a specification - the far
+    stopband of a real filter is re-entrant, and no straight line predicts that.
+    """
 
     #: (frequencies_Hz, gain_dB) datasheet response, set by each subclass.
     response = None
@@ -348,12 +362,26 @@ class _InterpolatedFilter(PassiveComponent):
     def __init__(self, name=None):
         super().__init__(name=name, params={})
         f_datasheet, gain_datasheet = self.response
+        freqs = np.asarray(f_datasheet, dtype=float)
+        gains = np.asarray(gain_datasheet, dtype=float)
         self.gain_f = interpolate.interp1d(
-            np.asarray(f_datasheet), np.asarray(gain_datasheet),
-            bounds_error=False)
+            freqs, gains, fill_value='extrapolate', bounds_error=False)
+        self.gain_floor_db = float(gains.min())
+        self._span_hz = (float(freqs.min()), float(freqs.max()))
 
     def gain(self, carrier_frequency):
-        return self.gain_f(carrier_frequency)
+        return np.clip(self.gain_f(carrier_frequency), self.gain_floor_db, 0.0)
+
+    def defined_span_hz(self):
+        """
+        The carrier band the datasheet tabulates, low and high in Hz.
+
+        ``gain`` answers outside this band too, by extending the endpoint slope,
+        so the returned value is the model stating where it is quoting measured
+        data rather than estimating. A caller that needs the distinction has to
+        ask, because the gain itself no longer shows it.
+        """
+        return self._span_hz
 
 
 @register("filter.vhf1320p", category="Filters", label="Mini-Circuits VHF-1320+")
@@ -387,6 +415,45 @@ class FilterHP_VHF1910p(_InterpolatedFilter):
                     2200, 4400]) * 1e6,
         np.asarray([-91, -76, -42, -26, -13, -7, -3.4, -2.2, -1.4, -1.1,
                     -1, -0.8]),
+    )
+
+
+@register("filter.vhf5050p", category="Filters", label="Mini-Circuits VHF-5050+")
+class FilterHP_VHF5050p(_InterpolatedFilter):
+    """
+    Mini-Circuits high-pass filter VHF-5050+
+
+    Passband 5500-10000 MHz, 3 dB cutoff 5050 MHz nominal, 5 sections, SMA.
+    Points are the datasheet's "Typical Performance Data at 25C" table, which
+    spans 50 MHz to 15 GHz; outside that the response is extrapolated.
+    """
+
+    response = (
+        np.asarray([50, 1000, 3600, 4200, 4700, 4800, 4950, 5050, 5200, 5500,
+                    5650, 9700, 10000, 10700, 12000, 14000, 15000]) * 1e6,
+        np.asarray([-60.91, -36.10, -30.42, -31.29, -13.75, -9.55, -4.71,
+                    -2.71, -1.34, -0.85, -0.79, -0.53, -0.66, -1.25, -2.99,
+                    -2.65, -5.25]),
+    )
+
+
+@register("filter.vlf6700p", category="Filters", label="Mini-Circuits VLF-6700+")
+class FilterLP_VLF6700p(_InterpolatedFilter):
+    """
+    Mini-Circuits low-pass filter VLF-6700+
+
+    Passband DC-6700 MHz, 3 dB cutoff 7600 MHz nominal, 7 sections, SMA.
+    Points are the datasheet's "Typical Performance Data at 25C" table, which
+    spans 50 MHz to 19.89 GHz; outside that the response is extrapolated. The
+    passband does extend down to DC, and extending the shallow 50-500 MHz slope
+    is a fair estimate there, but no measured point below 50 MHz is published.
+    """
+
+    response = (
+        np.asarray([50, 500, 1000, 3500, 5000, 6700, 7600, 8000, 9000, 10000,
+                    12000, 15000, 17000, 18000, 19890]) * 1e6,
+        np.asarray([-0.03, -0.08, -0.15, -0.25, -0.47, -0.79, -3.12, -7.62,
+                    -26.00, -55.95, -34.91, -26.32, -23.79, -21.88, -22.46]),
     )
 
 
