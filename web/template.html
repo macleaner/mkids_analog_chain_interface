@@ -163,7 +163,6 @@ tr.dom td{color:var(--accent)}
   <span id="chainname" title="edit the chain's name, notes and metadata">—</span>
   <div class="spacer"></div>
   <button id="btnNew">new chain</button>
-  <button id="btnPreset">load preset</button>
   <button id="btnUpload">open chain…</button>
   <button id="btnDownload" class="primary">download chain.json</button>
   <span id="stamp"></span>
@@ -1005,12 +1004,6 @@ $('btnNew').onclick = guard(() => {
   // The rest of the record is blank and nothing else will prompt for it, so
   // open it now, while the chain is being described anyway.
   $('record').classList.add('open');
-});
-
-$('btnPreset').onclick = guard(() => {
-  CHAIN = call('load_preset', CONFIG.default_preset);
-  selected = null;
-  renderAll();
 });
 
 /* The chain file this hands back is SignalChain.to_dict() output, so it
