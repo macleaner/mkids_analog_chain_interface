@@ -100,7 +100,7 @@ converters. From there:
 
 | To | Use |
 |---|---|
-| add a stage | the component library, left column |
+| add a stage | double-click it in the component library, left column |
 | edit a stage | click it — the card opens with its parameters |
 | name a stage | the `label` field in that card — this is what a budget refers to and what the file records |
 | set the endpoints | the **Converters** selects at the top of the signal chain |

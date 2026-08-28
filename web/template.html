@@ -71,7 +71,8 @@ textarea{resize:vertical;line-height:1.45}
 .cat>div.h{font-family:var(--mono);font-size:10px;color:var(--accent);
   text-transform:uppercase;letter-spacing:.07em;margin:0 0 4px}
 .lib{display:block;width:100%;text-align:left;padding:4px 7px;margin-bottom:2px;
-  background:transparent;border:1px solid transparent;font-size:12px;border-radius:4px}
+  background:transparent;border:1px solid transparent;font-size:12px;border-radius:4px;
+  user-select:none}
 .lib:hover{background:var(--panel2);border-color:var(--line)}
 
 .stage{border:1px solid var(--line);border-radius:6px;margin-bottom:5px;
@@ -158,6 +159,7 @@ tr.dom td{color:var(--accent)}
 <div id="grid">
   <section>
     <h1>Component library</h1>
+    <p class="doc">Double-click a component to append it to the chain.</p>
     <div id="lib"></div>
   </section>
 
@@ -350,7 +352,9 @@ function renderLibrary(){
       btn.className = 'lib';
       btn.textContent = item.label;
       btn.title = item.doc || item.type_id;
-      btn.onclick = guard(() => {
+      /* Double-click, so a click spent reading a label - or aimed at the one
+         below - does not lengthen the chain.                                  */
+      btn.ondblclick = guard(() => {
         CHAIN = call('add_component', item.type_id, defaultParams(item), null);
         selected = 'c' + (CHAIN.n_components - 1);
         renderAll();
@@ -468,7 +472,7 @@ function renderStages(){
   if (!CHAIN.stages.length){
     const empty = document.createElement('p');
     empty.className = 'doc';
-    empty.textContent = 'Empty chain — add components from the library, '
+    empty.textContent = 'Empty chain — double-click components in the library, '
                       + 'and pick converters above.';
     host.appendChild(empty);
     return;
