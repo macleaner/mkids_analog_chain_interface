@@ -243,6 +243,21 @@ it was dragged to be, and widening it back gives that width straight back. Below
 1100px the columns stack into one scrolling page and there is nothing left to
 drag.
 
+### The type scale
+
+Every size on the page is a step off one custom property, `--fs` in
+`web/template.html`. Raise it and the whole page follows — widgets, tables,
+documentation lines, the build stamp, and the plots with them: the tick and axis
+labels are drawn to a canvas, so they cannot inherit the page's type, and are
+handed a size measured off the caption above the plot rather than one written
+into the plot code. The five steps (`--fs` down to `--fs4`) are the levels the
+page uses; they are not sizes to be set one at a time.
+
+The plots then take what is left. A plot's height is its box less its caption,
+its controls and its legend, all measured — which is also how far the plot row
+can be dragged down, so a larger `--fs`, or a control added to a plot box,
+raises the floor instead of quietly costing the curves their height.
+
 ## Same code, not the same dependency versions
 
 The wheel asks for `numpy>=1.22` / `scipy>=1.8`; Pyodide supplies whatever it

@@ -12,6 +12,22 @@
   --ink:#dfe3ea; --ink2:#9aa3b2; --ink3:#6b7382;
   --accent:#d9a441; --accent2:#6f9ceb; --bad:#e0655f;
   --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+
+  /* One knob for the page's type. Every size below is a step off --fs, and the
+     plots measure their axes off the page rather than pinning a size of their
+     own, so raising this one value moves the whole page together - widgets,
+     tables, captions, tick labels and all. The steps are what the levels are
+     for, not sizes to be set individually:
+       --fs   body text, headings, the inputs and buttons that inherit them
+       --fs1  labels, library entries, the stage cards
+       --fs2  documentation lines, tables, the mono panels
+       --fs3  captions, the build stamp, plot ticks
+       --fs4  the tightest mono tags - a stage's model name and values       */
+  --fs:14px;
+  --fs1:calc(var(--fs) - 1px);
+  --fs2:calc(var(--fs) - 2px);
+  --fs3:calc(var(--fs) - 3px);
+  --fs4:calc(var(--fs) - 4px);
 }
 *{box-sizing:border-box}
 /* A column of bars with the grid taking whatever they leave, rather than the
@@ -20,12 +36,12 @@
    band. Measured, the grid ends where the window does - which is what makes
    dragging the bottom gutter divide what is actually on screen. */
 body{margin:0;background:var(--bg);color:var(--ink);
-  font:13px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;
+  font:var(--fs)/1.5 system-ui,-apple-system,Segoe UI,sans-serif;
   display:flex;flex-direction:column;height:100vh;overflow:hidden}
 body>*{flex:0 0 auto}
-h1{font-size:13px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+h1{font-size:var(--fs);font-weight:600;letter-spacing:.06em;text-transform:uppercase;
   color:var(--ink2);margin:0 0 10px}
-h2{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+h2{font-size:var(--fs2);font-weight:600;letter-spacing:.08em;text-transform:uppercase;
   color:var(--ink3);margin:16px 0 7px}
 h2:first-child{margin-top:0}
 button{font:inherit;color:var(--ink);background:var(--panel2);
@@ -43,26 +59,26 @@ textarea{resize:vertical;line-height:1.45}
 #boot .spin{width:26px;height:26px;border:3px solid var(--line);
   border-top-color:var(--accent);border-radius:50%;animation:s .8s linear infinite}
 @keyframes s{to{transform:rotate(360deg)}}
-#bootmsg{font-family:var(--mono);font-size:12px;color:var(--ink2)}
-#bootnote{font-size:11px;color:var(--ink3);max-width:420px;text-align:center}
+#bootmsg{font-family:var(--mono);font-size:var(--fs1);color:var(--ink2)}
+#bootnote{font-size:var(--fs2);color:var(--ink3);max-width:420px;text-align:center}
 
 #top{display:flex;align-items:center;gap:10px;padding:9px 14px;
   border-bottom:1px solid var(--line);background:var(--panel)}
 #top .brand{font-weight:600;letter-spacing:.04em}
 #top .brand b{color:var(--accent)}
-#chainname{font-family:var(--mono);font-size:12px;color:var(--ink2);
+#chainname{font-family:var(--mono);font-size:var(--fs1);color:var(--ink2);
   cursor:pointer;border-bottom:1px dotted var(--ink3);padding-bottom:1px}
 #chainname:hover{color:var(--ink);border-bottom-color:var(--accent)}
 #record{display:none;margin:9px 13px;padding:10px 12px;border-radius:6px;
   background:var(--panel);border:1px solid var(--line)}
 #record.open{display:block}
 #record .rrow{display:grid;grid-template-columns:104px 1fr;gap:9px;
-  align-items:start;margin-bottom:7px;font-size:12px}
+  align-items:start;margin-bottom:7px;font-size:var(--fs1)}
 #record .rrow>label{padding-top:4px}
-#record textarea{font-family:var(--mono);font-size:11px}
+#record textarea{font-family:var(--mono);font-size:var(--fs2)}
 #record .doc{margin-top:0}
 #top .spacer{flex:1}
-#stamp{font-family:var(--mono);font-size:10px;color:var(--ink3);text-align:right;line-height:1.4}
+#stamp{font-family:var(--mono);font-size:var(--fs3);color:var(--ink3);text-align:right;line-height:1.4}
 
 /* Every track that can be dragged is a custom property, so a drag is one
    property write and no rule is rebuilt. The values are written by the layout
@@ -131,10 +147,10 @@ body.ry,body.ry *{cursor:row-resize!important;user-select:none!important}
 }
 
 .cat{margin-bottom:12px}
-.cat>div.h{font-family:var(--mono);font-size:10px;color:var(--accent);
+.cat>div.h{font-family:var(--mono);font-size:var(--fs3);color:var(--accent);
   text-transform:uppercase;letter-spacing:.07em;margin:0 0 4px}
 .lib{display:block;width:100%;text-align:left;padding:4px 7px;margin-bottom:2px;
-  background:transparent;border:1px solid transparent;font-size:12px;border-radius:4px;
+  background:transparent;border:1px solid transparent;font-size:var(--fs1);border-radius:4px;
   user-select:none}
 .lib:hover{background:var(--panel2);border-color:var(--line)}
 .lib.on{background:var(--panel2);border-color:var(--accent)}
@@ -142,7 +158,7 @@ body.ry,body.ry *{cursor:row-resize!important;user-select:none!important}
 /* ---- the spec panel, at the foot of the library column ---- */
 #specs{margin-top:10px;padding-top:9px;border-top:1px solid var(--line)}
 #specs h2{margin:0 0 6px}
-#specs .sname{font-weight:600;font-size:12px;color:var(--accent);
+#specs .sname{font-weight:600;font-size:var(--fs1);color:var(--accent);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* Two lines at most: a docstring's first line is as long as its author made it,
    and the panel shares a fixed-height column with the list, so an unbounded
@@ -161,12 +177,12 @@ body.ry,body.ry *{cursor:row-resize!important;user-select:none!important}
 #specs .spark .zero{stroke:var(--ink3);stroke-dasharray:3 3;opacity:.55}
 #specs .spark .mark{fill:var(--accent)}
 #specs .sax{display:flex;justify-content:space-between;margin:3px 0 1px;
-  font-family:var(--mono);font-size:9px;color:var(--ink3)}
+  font-family:var(--mono);font-size:var(--fs4);color:var(--ink3)}
 /* Between the two frequencies, and not one of them, so it does not read as a
    value the model reports. */
 #specs .sax .snote{font-style:italic;opacity:.7}
 #specs .srow{display:flex;justify-content:space-between;gap:8px;
-  align-items:baseline;font-size:11px;margin-top:3px}
+  align-items:baseline;font-size:var(--fs2);margin-top:3px}
 #specs .srow>span:first-child{color:var(--ink3);white-space:nowrap}
 #specs .srow>span:last-child{font-family:var(--mono);color:var(--ink);
   text-align:right}
@@ -176,7 +192,7 @@ body.ry,body.ry *{cursor:row-resize!important;user-select:none!important}
 .stage.sel{border-color:var(--accent)}
 .stage>.hd{display:flex;align-items:center;gap:8px;padding:6px 9px;cursor:pointer}
 .stage>.hd:hover{background:var(--panel2)}
-.stage .idx{font-family:var(--mono);font-size:10px;color:var(--ink3);min-width:14px}
+.stage .idx{font-family:var(--mono);font-size:var(--fs3);color:var(--ink3);min-width:14px}
 /* A long model name gives way before the label or the values do: it is the one
    of the three the card's own body repeats. */
 .stage .lbl{font-weight:500;white-space:nowrap;flex:0 1 auto;
@@ -187,10 +203,10 @@ body.ry,body.ry *{cursor:row-resize!important;user-select:none!important}
 /* The lopsided shrink factor is what makes the model name give way first: a
    narrow column ellipsizes it down to a few characters before the label loses
    any, and the values never shrink at all. */
-.stage .type{font-family:var(--mono);font-size:9px;padding:1px 5px;border-radius:3px;
+.stage .type{font-family:var(--mono);font-size:var(--fs4);padding:1px 5px;border-radius:3px;
   background:var(--panel2);color:var(--ink3);white-space:nowrap;
   flex:0 9999 auto;min-width:3.5em;overflow:hidden;text-overflow:ellipsis}
-.stage .vals{font-family:var(--mono);font-size:9px;color:var(--ink3);
+.stage .vals{font-family:var(--mono);font-size:var(--fs4);color:var(--ink3);
   white-space:nowrap;flex:0 0 auto}
 .stage .sp{flex:1}
 /* The drop marker is an inset shadow rather than a border, so showing it does
@@ -199,9 +215,9 @@ body.ry,body.ry *{cursor:row-resize!important;user-select:none!important}
 .stage.drag{opacity:.45}
 .stage.dropbefore{box-shadow:inset 0 2px 0 var(--accent)}
 .stage.dropafter{box-shadow:inset 0 -2px 0 var(--accent)}
-.stage .grip{font-family:var(--mono);font-size:11px;letter-spacing:-2px;
+.stage .grip{font-family:var(--mono);font-size:var(--fs2);letter-spacing:-2px;
   color:var(--ink3);cursor:grab;visibility:hidden;padding-right:2px}
-.stage .mv{visibility:hidden;padding:0 5px;font-size:9px;color:var(--ink3);
+.stage .mv{visibility:hidden;padding:0 5px;font-size:var(--fs4);color:var(--ink3);
   background:transparent;border-color:transparent}
 /* A stage that cannot be dragged still reserves the handle's width, so the
    labels line up down the column instead of the converters sitting 28px left
@@ -215,15 +231,15 @@ body.ry,body.ry *{cursor:row-resize!important;user-select:none!important}
 .stage .body{padding:2px 9px 9px;border-top:1px solid var(--line);display:none}
 .stage.sel .body{display:block}
 .prow{display:grid;grid-template-columns:1fr 92px;gap:7px;align-items:center;
-  margin-top:6px;font-size:12px}
-.prow .u{font-family:var(--mono);font-size:10px;color:var(--ink3)}
-.doc{font-size:11px;color:var(--ink3);margin:5px 0 0;line-height:1.45}
-.doc code{font-family:var(--mono);font-size:10px;color:var(--ink2)}
+  margin-top:6px;font-size:var(--fs1)}
+.prow .u{font-family:var(--mono);font-size:var(--fs3);color:var(--ink3)}
+.doc{font-size:var(--fs2);color:var(--ink3);margin:5px 0 0;line-height:1.45}
+.doc code{font-family:var(--mono);font-size:var(--fs3);color:var(--ink2)}
 
 .ctl{display:grid;grid-template-columns:1fr 116px;gap:8px;align-items:center;
-  margin-bottom:6px;font-size:12px}
+  margin-bottom:6px;font-size:var(--fs1)}
 .seg{display:flex;gap:0;margin-bottom:8px}
-.seg button{border-radius:0;flex:1;padding:3px 6px;font-size:11px}
+.seg button{border-radius:0;flex:1;padding:3px 6px;font-size:var(--fs2)}
 .seg button:first-child{border-radius:5px 0 0 5px}
 .seg button:last-child{border-radius:0 5px 5px 0}
 
@@ -233,7 +249,7 @@ body.ry,body.ry *{cursor:row-resize!important;user-select:none!important}
 .tabs{display:flex;gap:2px;margin:0 0 10px;border-bottom:1px solid var(--line)}
 .tabs button{background:transparent;border:none;border-radius:0;
   border-bottom:2px solid transparent;padding:2px 8px 5px;margin-bottom:-1px;
-  font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+  font-size:var(--fs2);font-weight:600;letter-spacing:.08em;text-transform:uppercase;
   color:var(--ink3)}
 .tabs button:hover{color:var(--ink2)}
 .tabs button.on{color:var(--accent);border-bottom-color:var(--accent)}
@@ -252,12 +268,12 @@ body.ry,body.ry *{cursor:row-resize!important;user-select:none!important}
 #paneJson:not([hidden]){display:flex;flex-direction:column;flex:1}
 /* white-space:pre, not pre-wrap: a wrapped line looks like an indent level the
    file does not have, and this panel is here to show what the file is. */
-#jsonview{font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--ink2);
+#jsonview{font-family:var(--mono);font-size:var(--fs2);line-height:1.5;color:var(--ink2);
   background:var(--panel);border:1px solid var(--line);border-radius:6px;
   padding:9px 11px;margin:0;white-space:pre;user-select:text;
   overflow:auto;flex:1 1 auto;min-height:120px}
 
-table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px}
+table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:var(--fs2)}
 th{text-align:right;color:var(--ink3);font-weight:500;padding:4px 5px;
   border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg)}
 th:first-child,td:first-child{text-align:left}
@@ -265,17 +281,21 @@ td{padding:3px 5px;border-bottom:1px solid #24272e}
 tr.dom td{color:var(--accent)}
 .bar{height:3px;background:var(--accent2);border-radius:2px;min-width:1px}
 
-.tot{display:flex;gap:14px;flex-wrap:wrap;font-family:var(--mono);font-size:11px;
+.tot{display:flex;gap:14px;flex-wrap:wrap;font-family:var(--mono);font-size:var(--fs2);
   color:var(--ink2);background:var(--panel);border:1px solid var(--line);
   border-radius:6px;padding:7px 9px;margin-bottom:9px}
 .tot b{color:var(--ink);font-weight:600}
 .plot{background:var(--panel);border:1px solid var(--line);border-radius:6px;
   padding:9px;overflow:hidden;min-height:0}
-.plot .cap{font-family:var(--mono);font-size:10px;color:var(--ink3);margin-bottom:6px}
+.plot .cap{font-family:var(--mono);font-size:var(--fs3);color:var(--ink3);margin-bottom:6px}
 #err{display:none;margin:9px 13px;padding:8px 11px;border-radius:5px;
   background:#3a2422;border:1px solid var(--bad);color:#f0b3ae;
-  font-family:var(--mono);font-size:11px;white-space:pre-wrap}
+  font-family:var(--mono);font-size:var(--fs2);white-space:pre-wrap}
+/* uPlot's stylesheet sets the legend at a size of its own, which is the one
+   piece of type on the page that would not move with --fs. Pinned to the scale
+   at the size it already was. */
 .uplot{font-family:var(--mono)}
+.u-legend{font-size:var(--fs)}
 </style>
 </head>
 <body>
@@ -1277,14 +1297,43 @@ function selectPane(name){
 }
 
 /* ===================== plots ===================== */
+/* uPlot draws to a canvas, so it cannot inherit the page's type the way the
+   rest of the view does. It is handed a size measured off the page rather than
+   one written here: the ticks are drawn at whatever the caption above the plot
+   is, and so follow --fs with everything else. Without this the axes would be
+   the one thing on the page that stayed put when the scale moved.
+
+   labelSize is the band uPlot reserves for the axis label, so it is derived from
+   the label's size too - a bigger label in a band that did not grow with it is
+   how an axis title ends up clipped. */
+const AXIS_PX = Math.round(parseFloat(getComputedStyle($('ncap')).fontSize)) || 11;
+const LABEL_PX = AXIS_PX + 1;
 const AXIS = {stroke:'#6b7382', grid:{stroke:'#262a32', width:1},
-              ticks:{stroke:'#31363f'}, font:'10px ui-monospace,monospace'};
+              ticks:{stroke:'#31363f'},
+              font:`${AXIS_PX}px ui-monospace,monospace`,
+              labelFont:`bold ${LABEL_PX}px ui-monospace,monospace`};
+const labelBand = axis => Math.round(LABEL_PX * (axis === 'y' ? 2.4 : 2));
 const SERIES_COLORS = ['#d9a441','#6f9ceb','#68c2a3','#e0655f','#b78bd8',
                        '#dba36a','#7fc4d8','#c9d06a'];
 
-/* A plot takes whatever its box has left once the caption and the controls
-   above it have had theirs, so dragging the row gutter gives the height to the
-   curves rather than leaving a gap under them.
+const PLOT_MIN = 100;                   // the shortest curve worth drawing
+
+/* What a plot box spends on everything that is not the curve. The legend is
+   part of it: the height uPlot is given is the plotting area alone, and the
+   legend is drawn under that - so it has to be measured rather than assumed
+   away, and it is not a constant either, since the noise plot's legend wraps to
+   a second row once the per-source breakdown is on. */
+function plotChrome(hostId){
+  const host = $(hostId), box = host.closest('.plot');
+  const legend = host.querySelector('.u-legend');
+  return (host.offsetTop - box.offsetTop)            // padding, caption, controls
+       + (legend ? legend.getBoundingClientRect().height : 0)
+       + 9;                                          // the box's bottom padding
+}
+
+/* A plot takes whatever its box has left once the chrome has had its share, so
+   dragging the row gutter gives the height to the curves rather than leaving a
+   gap under them.
 
    Stacked on a narrow window the box has no height of its own - it is as tall
    as what is inside it, which includes the plot - so asking it would be circular
@@ -1294,8 +1343,24 @@ function plotSize(hostId){
   const width = Math.max(260, host.clientWidth || 420);
   if (stacked()) return {width, height: 216};
   const box = host.closest('.plot');
-  const above = host.offsetTop - box.offsetTop;   // padding, caption, controls
-  return {width, height: Math.max(120, Math.round(box.clientHeight - above - 9))};
+  return {width, height: Math.max(PLOT_MIN,
+                                  Math.round(box.clientHeight - plotChrome(hostId)))};
+}
+
+/* How short the plot row may be dragged. Measured rather than written down: it
+   is the taller of the two boxes' chrome plus the shortest curve worth drawing,
+   plus what the row spends outside the boxes. So a control added to a plot box,
+   or a larger --fs, raises the floor instead of quietly costing the curves their
+   height - and the legend wrapping to a second row when the breakdown goes on
+   does the same. */
+function plotsFloor(){
+  const box = $('pgain').closest('.plot');
+  const outside = $('plots').getBoundingClientRect().height
+                - box.getBoundingClientRect().height;   // panel padding, border
+  // Rounded up with a pixel to spare: every part of this is fractional and the
+  // row is written as a percentage, so a floor a hair short is one that clips.
+  return Math.ceil(Math.max(plotChrome('pgain'), plotChrome('pnoise'))
+                   + PLOT_MIN + outside) + 1;
 }
 
 function resizePlots(){
@@ -1303,12 +1368,19 @@ function resizePlots(){
   if (noisePlot) noisePlot.setSize(plotSize('pnoise'));
 }
 
-/* During a drag the plots are resized on every move - uPlot redraws a canvas it
-   already has, with no Python call behind it - but at most once a frame. */
-function schedulePlots(){
-  if (schedulePlots._frame) return;
-  schedulePlots._frame = requestAnimationFrame(() => {
-    schedulePlots._frame = 0;
+/* Re-fit the tracks and hand the plots whatever height that leaves - on the next
+   frame, and at most once a frame. Next frame rather than now for two reasons: a
+   drag fires moves faster than the page can be laid out, and a legend measured
+   in the same tick its plot was built has not been laid out at its final width
+   yet. It reads several rows taller than it ends up, and the plot row's floor is
+   computed from it, so measuring early sets the floor from a legend that does
+   not exist. Resizing a plot costs a canvas redraw of paths it already holds:
+   no data, and nothing from Python. */
+function settleLayout(){
+  if (settleLayout._frame) return;
+  settleLayout._frame = requestAnimationFrame(() => {
+    settleLayout._frame = 0;
+    applyLayout();
     resizePlots();
   });
 }
@@ -1322,14 +1394,15 @@ function renderGain(){
     ...plotSize('pgain'),
     padding: [8, 10, 0, 0],
     scales: {x: {time: false}},
-    axes: [{...AXIS, label:'carrier (GHz)', labelSize: 20},
-           {...AXIS, label:'gain (dB)', labelSize: 26}],
+    axes: [{...AXIS, label:'carrier (GHz)', labelSize: labelBand('x')},
+           {...AXIS, label:'gain (dB)', labelSize: labelBand('y')}],
     series: [{label:'GHz'},
              {label:'total gain', stroke:'#d9a441', width:1.6, value:(u,v)=>v==null?'—':v.toFixed(2)}],
     legend: {show: true},
   };
   if (gainPlot){ gainPlot.destroy(); gainPlot = null; }
   gainPlot = new uPlot(opts, data, $('pgain'));
+  settleLayout();
 }
 
 function renderNoise(){
@@ -1357,13 +1430,14 @@ function renderNoise(){
     ...plotSize('pnoise'),
     padding: [8, 10, 0, 0],
     scales: {x: {time: false, distr: 3}},          // log spectral axis
-    axes: [{...AXIS, label:'spectral offset (Hz)', labelSize: 20},
-           {...AXIS, label:'dBm/Hz', labelSize: 26}],
+    axes: [{...AXIS, label:'spectral offset (Hz)', labelSize: labelBand('x')},
+           {...AXIS, label:'dBm/Hz', labelSize: labelBand('y')}],
     series,
     legend: {show: true},
   };
   if (noisePlot){ noisePlot.destroy(); noisePlot = null; }
   noisePlot = new uPlot(opts, data, $('pnoise'));
+  settleLayout();
 }
 
 /* ===================== resizable panes =====================
@@ -1382,10 +1456,9 @@ function renderNoise(){
 const GUTTER = 7;                              // px, the gutter tracks
 const LAYOUT_DEFAULT = {c1: 236, c3: 380, r1: 0.52};
 // Below these a pane stops being useful rather than merely small: a library
-// entry no longer reads, a plot has no room left for its axes. The plot row's
-// floor is the taller of the two boxes' controls plus a curve worth drawing,
-// since below that the box clips rather than the plot shrinking.
-const LAYOUT_MIN = {c1: 150, mid: 320, c3: 240, top: 140, plots: 280};
+// entry no longer reads, a stage card has nowhere to open. The plot row has a
+// floor too, but a measured one - see plotsFloor.
+const LAYOUT_MIN = {c1: 150, mid: 320, c3: 240, top: 140};
 const LAYOUT_KEY = 'analog-chain-calculator.layout';
 
 const layout = {...LAYOUT_DEFAULT};
@@ -1410,7 +1483,7 @@ function fitLayout(){
   // splits the new height the way the old one was split.
   const height = grid.clientHeight;
   let top = Math.min(Math.max(layout.r1 * height, LAYOUT_MIN.top),
-                     height - GUTTER - LAYOUT_MIN.plots);
+                     height - GUTTER - plotsFloor());
   if (top < LAYOUT_MIN.top) top = (height - GUTTER) / 2;   // too short for both
   return {c1, c3, r1: top / height};
 }
@@ -1491,8 +1564,8 @@ function wireGutter(id, spec){
     document.body.classList.add('r' + spec.axis);
     gutter.onpointermove = move => {
       spec.at(move);
-      applyLayout();
-      schedulePlots();
+      applyLayout();      // at once, so the line stays under the pointer
+      settleLayout();     // the plots catch up a frame later
     };
     gutter.onpointerup = gutter.onpointercancel = () => {
       gutter.releasePointerCapture(ev.pointerId);
@@ -1640,8 +1713,10 @@ applyLayout();
    top bar and making it a line taller. Watching the window instead would catch
    only the first of those. */
 new ResizeObserver(() => {
-  applyLayout();       // a column left at a width the window no longer has
-  schedulePlots();     // would overflow it, so the tracks are re-fitted at once
+  // At once, because a column left at a width the window no longer has would
+  // overflow it. The plots, and the floor they set, follow on the next frame.
+  applyLayout();
+  settleLayout();
 }).observe($('grid'));
 
 boot();
