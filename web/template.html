@@ -14,8 +14,15 @@
   --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
 }
 *{box-sizing:border-box}
+/* A column of bars with the grid taking whatever they leave, rather than the
+   grid subtracting a height the bars are assumed to have: the top bar is as
+   tall as the build stamp inside it, and opening the record panel adds another
+   band. Measured, the grid ends where the window does - which is what makes
+   dragging the bottom gutter divide what is actually on screen. */
 body{margin:0;background:var(--bg);color:var(--ink);
-  font:13px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+  font:13px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;
+  display:flex;flex-direction:column;height:100vh;overflow:hidden}
+body>*{flex:0 0 auto}
 h1{font-size:13px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
   color:var(--ink2);margin:0 0 10px}
 h2{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
@@ -57,11 +64,44 @@ textarea{resize:vertical;line-height:1.45}
 #top .spacer{flex:1}
 #stamp{font-family:var(--mono);font-size:10px;color:var(--ink3);text-align:right;line-height:1.4}
 
-#grid{display:grid;grid-template-columns:236px minmax(320px,1fr) 380px;
-  gap:1px;background:var(--line);height:calc(100vh - 44px)}
+/* Every track that can be dragged is a custom property, so a drag is one
+   property write and no rule is rebuilt. The values are written by the layout
+   code at the foot of this file, which owns the defaults and the minimums -
+   they are deliberately not repeated here, since a size in two places is a size
+   that drifts. The middle column is minmax(0,1fr) rather than carrying its own
+   floor for the same reason: LAYOUT_MIN.mid is what holds it open, and a floor
+   here that disagreed would overflow the grid instead of squeezing a column. */
+#grid{display:grid;
+  grid-template-columns:var(--c1) var(--gutw) minmax(0,1fr) var(--gutw) var(--c3);
+  grid-template-rows:var(--r1) var(--gutw) minmax(0,1fr);
+  background:var(--bg);flex:1 1 auto;min-height:0}
 #grid>section{background:var(--bg);overflow-y:auto;padding:13px}
-#plots{grid-column:1/-1;background:var(--bg);padding:13px;
-  display:grid;grid-template-columns:1fr 1fr;gap:14px}
+/* minmax(0,1fr), so a plot box is exactly the row's height and never its own
+   content's: sized from what is inside it, a box would grow by whatever height
+   its plot was last given, and the plot is then sized from the box - a loop that
+   ratchets the canvas taller on every frame of a drag. */
+#plots{grid-column:1/-1;background:var(--bg);padding:13px;overflow:hidden;
+  display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:minmax(0,1fr);gap:14px}
+
+/* ---- the gutters ----
+   Tracks of the grid rather than styled gaps, because a gap cannot be grabbed:
+   the track is wide enough to hit with a pointer, and the rule drawn down the
+   middle of it is the 1px line the layout had before it could be dragged. */
+.gut{position:relative;background:var(--bg);touch-action:none}
+.gut::before{content:'';position:absolute;background:var(--line)}
+.gut:focus{outline:none}
+.gut:hover::before,.gut:focus-visible::before,.gut.on::before{background:var(--accent)}
+.vgut{cursor:col-resize}
+.vgut::before{top:0;bottom:0;left:50%;width:1px;margin-left:-.5px}
+.vgut:hover::before,.vgut:focus-visible::before,.vgut.on::before{width:3px;margin-left:-1.5px}
+.hgut{grid-column:1/-1;cursor:row-resize}
+.hgut::before{left:0;right:0;top:50%;height:1px;margin-top:-.5px}
+.hgut:hover::before,.hgut:focus-visible::before,.hgut.on::before{height:3px;margin-top:-1.5px}
+/* The pointer leaves the gutter as soon as the drag is under way - it is
+   captured, so the events still arrive, but the cursor would otherwise change
+   to whatever it is passing over, and a drag across a table would select it. */
+body.rx,body.rx *{cursor:col-resize!important;user-select:none!important}
+body.ry,body.ry *{cursor:row-resize!important;user-select:none!important}
 /* The library list scrolls inside the column and the spec panel sits below it,
    so the specs of the entry just clicked stay in view while you scroll on
    looking for the next one.
@@ -75,8 +115,14 @@ textarea{resize:vertical;line-height:1.45}
 #lib{flex:1 1 auto;overflow-y:auto;min-height:132px}
 
 @media (max-width:1100px){
-  #grid{grid-template-columns:1fr;height:auto}
+  /* One tall page again: the window stops bounding the grid, so the panes are
+     as tall as what is in them and the whole thing scrolls. */
+  body{height:auto;overflow:visible}
+  #grid{grid-template-columns:1fr;grid-template-rows:none;flex:0 0 auto}
   #plots{grid-template-columns:1fr}
+  /* Stacked, every pane is already the full width and the page scrolls as one,
+     so there is no boundary left for a gutter to move. */
+  .gut{display:none}
   /* One tall column that scrolls as a page: the list flows at its full height
      again and the panel follows it. Two ids, so this beats the rules above
      whichever order the two end up in. */
@@ -223,7 +269,8 @@ tr.dom td{color:var(--accent)}
   color:var(--ink2);background:var(--panel);border:1px solid var(--line);
   border-radius:6px;padding:7px 9px;margin-bottom:9px}
 .tot b{color:var(--ink);font-weight:600}
-.plot{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:9px}
+.plot{background:var(--panel);border:1px solid var(--line);border-radius:6px;
+  padding:9px;overflow:hidden;min-height:0}
 .plot .cap{font-family:var(--mono);font-size:10px;color:var(--ink3);margin-bottom:6px}
 #err{display:none;margin:9px 13px;padding:8px 11px;border-radius:5px;
   background:#3a2422;border:1px solid var(--bad);color:#f0b3ae;
@@ -275,12 +322,20 @@ tr.dom td{color:var(--accent)}
     <div id="specs"></div>
   </section>
 
-  <section>
+  <div class="gut vgut" id="gut1" role="separator" tabindex="0"
+    aria-orientation="vertical" aria-label="width of the component library"
+    title="drag to resize · arrow keys to nudge · double-click to reset"></div>
+
+  <section id="col2">
     <h1>Signal chain</h1>
     <div id="digi"></div>
     <h2>Stages</h2>
     <div id="stages"></div>
   </section>
+
+  <div class="gut vgut" id="gut2" role="separator" tabindex="0"
+    aria-orientation="vertical" aria-label="width of the analysis column"
+    title="drag to resize · arrow keys to nudge · double-click to reset"></div>
 
   <section id="col3">
     <div class="tabs" id="tabs" role="tablist">
@@ -314,6 +369,10 @@ tr.dom td{color:var(--accent)}
       <pre id="jsonview"></pre>
     </div>
   </section>
+
+  <div class="gut hgut" id="gut3" role="separator" tabindex="0"
+    aria-orientation="horizontal" aria-label="height of the plots"
+    title="drag to resize · arrow keys to nudge · double-click to reset"></div>
 
   <div id="plots">
     <div class="plot">
@@ -1223,9 +1282,35 @@ const AXIS = {stroke:'#6b7382', grid:{stroke:'#262a32', width:1},
 const SERIES_COLORS = ['#d9a441','#6f9ceb','#68c2a3','#e0655f','#b78bd8',
                        '#dba36a','#7fc4d8','#c9d06a'];
 
+/* A plot takes whatever its box has left once the caption and the controls
+   above it have had theirs, so dragging the row gutter gives the height to the
+   curves rather than leaving a gap under them.
+
+   Stacked on a narrow window the box has no height of its own - it is as tall
+   as what is inside it, which includes the plot - so asking it would be circular
+   and the plot keeps a fixed height there instead.                            */
 function plotSize(hostId){
   const host = $(hostId);
-  return {width: Math.max(260, host.clientWidth || 420), height: 216};
+  const width = Math.max(260, host.clientWidth || 420);
+  if (stacked()) return {width, height: 216};
+  const box = host.closest('.plot');
+  const above = host.offsetTop - box.offsetTop;   // padding, caption, controls
+  return {width, height: Math.max(120, Math.round(box.clientHeight - above - 9))};
+}
+
+function resizePlots(){
+  if (gainPlot) gainPlot.setSize(plotSize('pgain'));
+  if (noisePlot) noisePlot.setSize(plotSize('pnoise'));
+}
+
+/* During a drag the plots are resized on every move - uPlot redraws a canvas it
+   already has, with no Python call behind it - but at most once a frame. */
+function schedulePlots(){
+  if (schedulePlots._frame) return;
+  schedulePlots._frame = requestAnimationFrame(() => {
+    schedulePlots._frame = 0;
+    resizePlots();
+  });
 }
 
 function renderGain(){
@@ -1281,6 +1366,161 @@ function renderNoise(){
   noisePlot = new uPlot(opts, data, $('pnoise'));
 }
 
+/* ===================== resizable panes =====================
+   The three columns and the plot row are tracks of one grid, sized from three
+   numbers this section owns and writes as custom properties. The stylesheet
+   declares no width of its own, so a default lives here and only here.
+
+   What is kept is the size asked for; what is written is that size clamped to
+   what the window can currently show. So narrowing the window squeezes a column
+   without forgetting how wide it was dragged to be, and widening it back gives
+   that width straight back - and only a drag, which is the user saying so,
+   overwrites the asked-for size with the clamped one.
+
+   Pane sizes are a workspace preference and say nothing about the hardware, so
+   they are remembered in localStorage and never touch the chain file.         */
+const GUTTER = 7;                              // px, the gutter tracks
+const LAYOUT_DEFAULT = {c1: 236, c3: 380, r1: 0.52};
+// Below these a pane stops being useful rather than merely small: a library
+// entry no longer reads, a plot has no room left for its axes. The plot row's
+// floor is the taller of the two boxes' controls plus a curve worth drawing,
+// since below that the box clips rather than the plot shrinking.
+const LAYOUT_MIN = {c1: 150, mid: 320, c3: 240, top: 140, plots: 280};
+const LAYOUT_KEY = 'analog-chain-calculator.layout';
+
+const layout = {...LAYOUT_DEFAULT};
+const stacked = () => matchMedia('(max-width:1100px)').matches;
+const gridBox = () => $('grid').getBoundingClientRect();
+
+/* The asked-for sizes, made to fit the window as it is now. */
+function fitLayout(){
+  const grid = $('grid');
+  let c1 = Math.max(LAYOUT_MIN.c1, layout.c1);
+  let c3 = Math.max(LAYOUT_MIN.c3, layout.c3);
+  // The middle column keeps its minimum first; when even the three minimums do
+  // not fit, the two side columns are scaled down together rather than one of
+  // them absorbing the whole squeeze.
+  const over = c1 + c3 + LAYOUT_MIN.mid - (grid.clientWidth - 2 * GUTTER);
+  if (over > 0){
+    const scale = Math.max(0, (c1 + c3 - over) / (c1 + c3));
+    c1 *= scale;
+    c3 *= scale;
+  }
+  // r1 is a fraction of the grid, not a pixel height, so a window resized taller
+  // splits the new height the way the old one was split.
+  const height = grid.clientHeight;
+  let top = Math.min(Math.max(layout.r1 * height, LAYOUT_MIN.top),
+                     height - GUTTER - LAYOUT_MIN.plots);
+  if (top < LAYOUT_MIN.top) top = (height - GUTTER) / 2;   // too short for both
+  return {c1, c3, r1: top / height};
+}
+
+function applyLayout(){
+  const fit = fitLayout();
+  const style = $('grid').style;
+  style.setProperty('--gutw', GUTTER + 'px');
+  style.setProperty('--c1', fit.c1.toFixed(1) + 'px');
+  style.setProperty('--c3', fit.c3.toFixed(1) + 'px');
+  style.setProperty('--r1', (fit.r1 * 100).toFixed(3) + '%');
+}
+
+/* Storage is unavailable on a file:// page in some browsers, and a layout is
+   not worth failing the page over: the defaults are a working layout. */
+function saveLayout(){
+  try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); }
+  catch (err){ /* not remembered, still usable */ }
+}
+
+function loadLayout(){
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(LAYOUT_KEY) || 'null'); }
+  catch (err){ return; }
+  if (!saved || typeof saved !== 'object') return;
+  // Per key, so a stored layout from an older page - or a hand-edited one -
+  // contributes what it can and the rest stays at the default.
+  for (const key of Object.keys(layout))
+    if (Number.isFinite(saved[key])) layout[key] = saved[key];
+}
+
+/* What each gutter moves. Both column gutters size the column on their near
+   side, so the one being dragged is the one under the pointer; the row gutter
+   sizes the top row, and the plots take what is left.
+
+   A drag sets the size the pointer is asking for rather than accumulating
+   deltas: the line stays under the pointer, and when a minimum has stopped the
+   pane from following, moving back picks it up at the same place instead of an
+   offset away. Nudges start from the fitted size for the same reason - holding
+   an arrow key against a minimum must not build up a size nothing can show.   */
+const GUTTERS = {
+  gut1: {axis: 'x',
+         at: ev => { layout.c1 = ev.clientX - gridBox().left - GUTTER / 2; },
+         by: step => { layout.c1 = fitLayout().c1 + step; },
+         reset: () => { layout.c1 = LAYOUT_DEFAULT.c1; }},
+  gut2: {axis: 'x',
+         at: ev => { layout.c3 = gridBox().right - ev.clientX - GUTTER / 2; },
+         by: step => { layout.c3 = fitLayout().c3 - step; },
+         reset: () => { layout.c3 = LAYOUT_DEFAULT.c3; }},
+  gut3: {axis: 'y',
+         at: ev => { layout.r1 = (ev.clientY - gridBox().top - GUTTER / 2)
+                               / $('grid').clientHeight; },
+         by: step => { const height = $('grid').clientHeight;
+                       layout.r1 = (fitLayout().r1 * height + step) / height; },
+         reset: () => { layout.r1 = LAYOUT_DEFAULT.r1; }},
+};
+
+/* A size the window cannot show is not worth remembering, so what a drag or a
+   nudge commits is the fitted size. */
+function commitLayout(){
+  Object.assign(layout, fitLayout());
+  saveLayout();
+  resizePlots();
+}
+
+function wireGutter(id, spec){
+  const gutter = $(id);
+  const NUDGE = {x: {ArrowLeft: -1, ArrowRight: 1},
+                 y: {ArrowUp: -1, ArrowDown: 1}}[spec.axis];
+
+  gutter.onpointerdown = ev => {
+    if (ev.button !== 0) return;
+    ev.preventDefault();                  // a drag is not a text selection
+    // Captured, so the drag survives the pointer outrunning the gutter - which
+    // it will, since the gutter is 7px wide and moving.
+    gutter.setPointerCapture(ev.pointerId);
+    gutter.classList.add('on');
+    document.body.classList.add('r' + spec.axis);
+    gutter.onpointermove = move => {
+      spec.at(move);
+      applyLayout();
+      schedulePlots();
+    };
+    gutter.onpointerup = gutter.onpointercancel = () => {
+      gutter.releasePointerCapture(ev.pointerId);
+      gutter.classList.remove('on');
+      document.body.classList.remove('r' + spec.axis);
+      gutter.onpointermove = gutter.onpointerup = gutter.onpointercancel = null;
+      commitLayout();
+    };
+  };
+
+  gutter.onkeydown = ev => {
+    if (ev.key === 'Home') spec.reset();
+    else if (NUDGE[ev.key] !== undefined)
+      spec.by(NUDGE[ev.key] * (ev.shiftKey ? 48 : 12));
+    else return;
+    ev.preventDefault();                  // arrows would otherwise scroll
+    applyLayout();
+    commitLayout();
+  };
+
+  // The gesture for "put it back", on the thing that moved it.
+  gutter.ondblclick = () => {
+    spec.reset();
+    applyLayout();
+    commitLayout();
+  };
+}
+
 /* ===================== orchestration ===================== */
 function renderAll(){
   renderRecord();
@@ -1327,6 +1567,9 @@ $('btnContrib').onclick = guard(() => {
   renderNoise();
 });
 
+/* The record panel is a band above the grid, so opening it takes height from
+   the grid rather than pushing its foot off the window. What that costs the
+   panes is settled by the observer below. */
 $('chainname').onclick = () => $('record').classList.toggle('open');
 
 /* Committed on blur like every other field. A rejected name or a description
@@ -1386,13 +1629,20 @@ $('fileJson').onchange = async ev => {
   ev.target.value = '';
 };
 
-addEventListener('resize', () => {
-  clearTimeout(addEventListener._t);
-  addEventListener._t = setTimeout(() => {
-    if (gainPlot) gainPlot.setSize(plotSize('pgain'));
-    if (noisePlot) noisePlot.setSize(plotSize('pnoise'));
-  }, 120);
-});
+for (const [id, spec] of Object.entries(GUTTERS)) wireGutter(id, spec);
+// Before boot, so the first plots are drawn at the size they will be kept at.
+loadLayout();
+applyLayout();
+
+/* Everything that changes the room the panes have goes through the grid's own
+   box, so one observer covers all of it: the window being resized, the record
+   panel or the error band opening above it, and the build stamp arriving in the
+   top bar and making it a line taller. Watching the window instead would catch
+   only the first of those. */
+new ResizeObserver(() => {
+  applyLayout();       // a column left at a width the window no longer has
+  schedulePlots();     // would overflow it, so the tracks are re-fitted at once
+}).observe($('grid'));
 
 boot();
 </script>

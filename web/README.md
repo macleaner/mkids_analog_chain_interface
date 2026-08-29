@@ -111,6 +111,7 @@ converters. From there:
 | remove an endpoint | its `×`, or its select back to *— none —* |
 | name the chain, or annotate it | click the chain name in the top bar |
 | see what any of that saves as | the **Chain file** tab, right-hand column |
+| give a pane more room | drag the gutter beside it — double-click the gutter to put it back |
 
 A stage row says what the stage is called, what model it is, and the values
 that separate it from another stage of the same model — the three things you
@@ -218,6 +219,29 @@ token ends, and no wrapped line pretending to be an indent level.
 
 Only the visible tab costs a round trip: edits made with the budget up are
 picked up when you switch back, not recomputed into a hidden panel.
+
+### Sizing the panes
+
+The three columns and the plots are separated by draggable gutters: drag one to
+give the room to whichever pane the work needs it in — a wide library while
+picking components, a wide budget while reading one, tall plots while looking at
+a curve. A gutter also takes the keyboard (tab to it, arrows to nudge, shift for
+a bigger step), and a double-click or `Home` puts it back where it started.
+
+The plots are resized rather than revealed: a plot fills whatever its box has
+left under the caption and the controls, so height dragged into the bottom row
+goes to the curves. Sizes are kept in `localStorage` and restored on the next
+open. They are a workspace preference and say nothing about the hardware, so
+they never touch the chain file — a chain downloaded here is byte for byte what
+it would have been at any other pane size.
+
+What is remembered is the size asked for, and what is used is that size clamped
+to what the window can show: no pane can be dragged smaller than the point where
+it stops being readable, and no column can squeeze the signal chain below its
+minimum. So narrowing the window squeezes a column without forgetting how wide
+it was dragged to be, and widening it back gives that width straight back. Below
+1100px the columns stack into one scrolling page and there is nothing left to
+drag.
 
 ## Same code, not the same dependency versions
 
