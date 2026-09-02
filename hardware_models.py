@@ -373,11 +373,27 @@ class _InterpolatedLNA(ActiveComponent):
             self.f_datasheet, self.gain_datasheet, bounds_error=False)
 
         noise_f, noise_temp_k = self.noise_response
+        noise_freqs = np.asarray(noise_f, dtype=float)
         self.noise_temp_datasheet = np.asarray(noise_temp_k, dtype=float)
         self.noise_power_datasheet = kb * self.noise_temp_datasheet
         self.noise_f = interpolate.interp1d(
-            np.asarray(noise_f, dtype=float), self.noise_power_datasheet,
-            bounds_error=False)
+            noise_freqs, self.noise_power_datasheet, bounds_error=False)
+
+        # Checked rather than trusted to the docstring: a noise curve narrower
+        # than the gain curve gives a band where the component amplifies and
+        # reports no noise for doing it, which reads as a free improvement to
+        # the budget instead of as missing data. Datasheets really do tabulate
+        # the two over different spans, so this is a live mistake to make.
+        if (noise_freqs.min() > self.f_datasheet.min()
+                or noise_freqs.max() < self.f_datasheet.max()):
+            raise ValueError(
+                f"{type(self).__name__}: noise_response covers "
+                f"{noise_freqs.min() / 1e9:g}-{noise_freqs.max() / 1e9:g} GHz "
+                f"but gain_response covers "
+                f"{self.f_datasheet.min() / 1e9:g}-"
+                f"{self.f_datasheet.max() / 1e9:g} GHz; the noise curve has to "
+                f"span at least the gain curve"
+            )
 
     def gain(self, carrier_frequency):
         return self.gain_f(carrier_frequency)
@@ -440,6 +456,44 @@ class LNF_LNC1_5_6B(_InterpolatedLNA):
                           5.5, 6.0]),
         np.asarray([6.0, 4.0, 2.0, 1.65, 1.6, 1.65, 1.65, 1.7, 1.7, 1.95,
                     2.0, 2.3]),
+    )
+
+
+@register("amplifier.lnf_lnc0_3_14b", category="Amplifiers",
+          label="LNF-LNC0.3_14B (~3.6 K)")
+class LNF_LNC0_3_14B(_InterpolatedLNA):
+    """
+    Cryogenic LNA, 0.3-14 GHz, roughly 3.6 K noise temperature.
+
+    Low Noise Factory LNC0.3_14B at 5 K, on its 19.2 mW bias point,
+    Vd = 1.2 V and Id = 16 mA. Two decades of band at 38 dB, with noise best in
+    the middle - 2.4 K around 7 GHz - and worst at both ends, 6.5 K at 500 MHz
+    and 8 K at 14 GHz. The headline 3.6 K is met over roughly 2-10 GHz and
+    nowhere near the edges, which is the whole reason the curve is carried.
+
+    The 0.3 GHz noise point is extended from the measured 0.5-1.0 GHz slope, not
+    measured: gain is published from 0.3 GHz but noise only from 0.5 GHz, and
+    dropping the 0.3 GHz gain point instead would silently narrow a part whose
+    name is its band. It is the one estimated number here.
+
+    The datasheet also sweeps bias from 800 uW to this 19.2 mW point, over which
+    gain falls to about 20 dB and the noise roughly doubles. Only the 19.2 mW
+    curve is modelled, since there is no bias parameter to select the other end
+    with, so this is the part at full power and not at its quietest setting.
+    """
+
+    gain_response = (
+        1e9 * np.asarray([0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0,
+                          7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0]),
+        np.asarray([30.0, 37.0, 40.2, 40.4, 40.0, 39.5, 39.0, 38.6, 38.3,
+                    38.2, 38.1, 38.0, 37.9, 37.9, 37.9, 38.0, 38.2, 36.5]),
+    )
+    noise_response = (
+        1e9 * np.asarray([0.3, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0,
+                          8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0]),
+        #  7.1 K at 0.3 GHz continues the 0.5-1.0 GHz slope; see the docstring.
+        np.asarray([7.1, 6.5, 5.0, 4.0, 3.5, 3.0, 2.75, 2.6, 2.5, 2.4,
+                    2.6, 3.0, 3.5, 4.25, 4.75, 5.5, 8.0]),
     )
 
 
