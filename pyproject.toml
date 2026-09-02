@@ -36,4 +36,5 @@ py-modules = [
     "signal_chain",
     "hardware_models",
     "chain_api",
+    "notebook_export",
 ]

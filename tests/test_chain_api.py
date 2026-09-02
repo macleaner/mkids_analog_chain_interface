@@ -53,6 +53,7 @@ def test_every_endpoint_returns_real_json():
         chain_api.sweep_gain(1e8, 3e9, 21),
         chain_api.sweep_noise(CARRIER, 1e2, 1e6, 11, True, True),
         chain_api.to_json(),
+        chain_api.notebook(),
     ]
     for payload in payloads:
         assert payload["ok"], payload.get("error")

@@ -89,7 +89,8 @@ def check_wheel(path):
     if bad is not None:
         sys.exit(f'wheel is corrupt at {bad}')
     required = {'chain_api.py', 'signal_chain.py', 'registry.py',
-                'hardware_models.py', 'component.py', 'noise_budget.py', 'utils.py'}
+                'hardware_models.py', 'component.py', 'noise_budget.py',
+                'utils.py', 'notebook_export.py'}
     missing = required - set(names)
     if missing:
         sys.exit(f'wheel is missing {sorted(missing)} — check '
@@ -167,6 +168,13 @@ def main():
         'built_at': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),
         'git_sha': git_sha(),
         'offline': False,
+        # The checkout this artifact was built from, for the notebook download
+        # to put on sys.path: the core is not on PyPI, so a generated notebook
+        # that named no path would need editing before its first cell ran. It
+        # is a hint and not a requirement - the notebook falls back to walking
+        # up from wherever it was saved, then to telling the reader what to
+        # install. Absolute and machine-local, like the --desktop launcher's.
+        'source_root': ROOT,
     }
     config_json = json.dumps(config, indent=2)
     json.loads(config_json)                       # must be a valid JSON literal

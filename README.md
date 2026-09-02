@@ -87,6 +87,16 @@ the chain name in the top bar edits the record that file carries: its name,
 free-text notes, and a JSON `metadata` object for whatever ties the chain to
 the measurement it describes.
 
+**notebook.ipynb**, beside that download, writes a Jupyter notebook for the
+chain on screen: it draws the page's two plots in matplotlib, adds the noise
+spectrum referred to the plane the budget is taken at, prints and exports the
+budget, and changes a component to compare — with this chain's labels, at the
+plane and spans the page is showing. The chain itself is
+embedded in its first cell, so it analyses what the GUI had open with no file to
+find and nothing to point it at. That is the way out of the page for anything
+it does not do; see
+[`web/README.md`](web/README.md#taking-it-to-jupyter).
+
 ### Basic Example
 
 ```python
@@ -150,6 +160,10 @@ It loads `examples/simple_cryogenic_system.json`, which is the same file the
 browser GUI's **download chain.json** button produces — point it at your own
 download to carry a chain from the GUI into a notebook. Its plots are the ones
 the browser draws, so the two can be compared directly.
+
+This is the hand-written tour, over a chain chosen to show the models off. For
+the same operations over *your* chain, with your labels already in them, use
+the GUI's **notebook.ipynb** button and start from what it generates.
 
 ## Saving and Loading Chains
 
@@ -441,6 +455,7 @@ analog_chain_interface/
 ├── utils.py                   # Utility functions
 ├── diagram_generator.py       # Visualization
 ├── chain_api.py               # JSON facade (drives the browser GUI)
+├── notebook_export.py         # Generates the GUI's notebook.ipynb download
 ├── open_web_gui.py            # Build if stale, then open the browser GUI
 ├── examples/
 │   ├── analog_chain_walkthrough.ipynb   # Guided notebook tour

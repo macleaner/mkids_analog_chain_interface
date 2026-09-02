@@ -64,7 +64,7 @@ The assembler writes nothing unless: the markers are present *and in source
 order*; no payload contains a sequence that would close its enclosing element
 early (`</script`, `</style`, `-->`, or a quote/backslash/newline in the
 base64); the config parses as JSON; the wheel is a valid zip containing all
-seven core modules; and the page's script block passes `node --check` (skipped
+eight core modules; and the page's script block passes `node --check` (skipped
 if node is absent).
 
 ## The seam
@@ -86,7 +86,8 @@ reports `SignalChain`'s numbers rather than any of its own.
 
 For working with chains outside the GUI — including loading a chain this page
 downloaded, and reproducing both of its plots — see
-[`examples/analog_chain_walkthrough.ipynb`](../examples/analog_chain_walkthrough.ipynb).
+[`examples/analog_chain_walkthrough.ipynb`](../examples/analog_chain_walkthrough.ipynb),
+which is the hand-written version of what **notebook.ipynb** generates.
 
 Component forms are generated from `registry.ParamSpec`, and submitted values
 go back through `ParamSpec.validate`. The browser panel and the Qt panel
@@ -111,6 +112,7 @@ converters. From there:
 | remove an endpoint | its `×`, or its select back to *— none —* |
 | name the chain, or annotate it | click the chain name in the top bar |
 | see what any of that saves as | the **Chain file** tab, right-hand column |
+| carry on in Jupyter | **notebook.ipynb**, top bar |
 | give a pane more room | drag the gutter beside it — double-click the gutter to put it back |
 
 A stage row says what the stage is called, what model it is, and the values
@@ -219,6 +221,99 @@ token ends, and no wrapped line pretending to be an indent level.
 
 Only the visible tab costs a round trip: edits made with the budget up are
 picked up when you switch back, not recomputed into a hidden panel.
+
+### Taking it to Jupyter
+
+**notebook.ipynb** downloads a second file: a notebook that analyses *this*
+chain. Open it in Jupyter and Run All — it lists the stages, draws both of this
+page's plots in matplotlib, draws the noise spectrum referred to the plane the
+budget is taken at, prints the budget table, writes the budget out as CSV, then
+rebuilds one component with a different value and compares the two. It is the
+point where the page stops being enough: a fit across several cooldowns, a
+sweep the page does not offer, a figure for a paper.
+
+The plane-referred spectrum is the one section with no single control behind it
+on the page. `noise_budget` accepts an array for the spectral frequency, so it
+is the budget table swept rather than a second calculation — the notebook
+asserts that the curve read at the budget's own offset *is* that budget's
+total, and marks the point on the plot. Referring backwards means it is not a
+power a meter would read at the plane; it is what limits you there, across the
+offset range.
+
+It is generated for the chain rather than being a fixed template with a
+filename dropped in, so nothing in it has to be edited before it runs:
+
+* **the labels are this chain's labels.** The budget is referred to the plane
+  the table is showing, the sweeps run over the spans in the two plot boxes,
+  and the carrier and spectral offset are the ones in the controls — so the
+  notebook opens where the work left off rather than on defaults nobody chose.
+  A generic template would hand someone `chain.get_index("LNA")` for a chain
+  with no LNA in it, and fail on the cell meant to be teaching them the call.
+* **the component it changes is one that is in the chain**, given a value that
+  component's own `ParamSpec` accepts — so the compare section runs, and the
+  cell that demonstrates a *rejected* value is the same validation the form
+  beside it uses. A chain with nothing to vary gets no compare section instead
+  of a broken one.
+* **an empty chain says so.** With no stages there is no plane to refer a
+  budget to and nothing to sweep, so the analysis sections are left out rather
+  than emitted as cells that cannot run.
+
+**The chain it analyses is the one that was on screen**, embedded in the first
+code cell as the chain file — byte for byte what **download chain.json**
+writes. It is the notebook's subject, not a default it falls back to: nothing
+is looked up on disk, so no file lying around can change what gets analysed
+and no download has to have happened first. The prose in the notebook and the
+chain it runs on cannot come apart.
+
+Redirecting it is one assignment — `CHAIN_FILE = "…json"`, right under the
+chain — which is how the same analysis runs over a later cooldown of the same
+hardware, or over a variant it wrote itself. And since the embedded text *is* a
+chain file, `chain.save(...)` in any cell hands back the `.json`; no new format
+is introduced by any of this.
+
+What it does not carry is results. Every number in it is a call, computed by
+the reader's own kernel at the reader's own numpy and scipy — which is the same
+reason this page has a build stamp, and it is where the one known difference
+between local and browser numbers ([above](#same-code-not-the-same-dependency-versions))
+would show up. The notebook stamps what generated it, for the same reason.
+
+Generated by [`notebook_export.py`](../notebook_export.py), which is in the
+wheel, so `chain_api.notebook()` is available to a script as well. Guarded by
+[`tests/test_notebook_export.py`](../tests/test_notebook_export.py), which
+executes every code cell of a generated notebook — the only useful guarantee
+about a generated notebook being that it runs.
+
+#### Finding the core
+
+**`analog-chain-core` is not published to PyPI**, so `pip install
+analog-chain-core` cannot work and the notebook never suggests it. The setup
+cell tries three things in order, and normally none of them needs doing by
+hand:
+
+1. the modules are already importable — the kernel installed them, or was
+   started inside the checkout;
+2. `REPO_ROOT`, at the top of that cell, which the build fills in with the
+   checkout **this page was assembled from** (`source_root` in the build
+   config). The page is built on the machine it is used on, so this is the
+   route that usually fires, and it prints the directory it imported from;
+3. a walk up from wherever the notebook was saved, which covers a checkout at
+   some other path — a notebook saved inside one needs no path at all.
+
+Only if all three miss does it raise, and it then names the two routes that
+work: installing from a checkout,
+
+```bash
+python -m pip install /path/to/analog_chain_interface
+```
+
+or editing `REPO_ROOT` to point at one, which needs no install. A copy of the
+page moved to another machine keeps the first machine's path, so its notebooks
+fall through to (3) — a hint, not a dependency.
+
+The plots need `matplotlib`, which is not bundled either — the notebook is a
+few kilobytes of text, not an environment — and says so with the install line
+rather than a bare `ModuleNotFoundError`. `pandas` is used if it is there and
+skipped if it is not.
 
 ### Sizing the panes
 

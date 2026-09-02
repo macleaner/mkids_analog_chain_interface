@@ -33,6 +33,7 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
+import notebook_export
 import registry
 from component import ADCComponent, DACComponent
 from signal_chain import SignalChain
@@ -44,7 +45,8 @@ __all__ = [
     "set_param", "set_label",
     "set_digitizer", "set_digitizer_param",
     "set_name", "set_description", "set_metadata",
-    "budget", "sweep_gain", "sweep_noise", "to_json", "from_json", "provenance",
+    "budget", "sweep_gain", "sweep_noise",
+    "to_json", "from_json", "notebook", "provenance",
 ]
 
 # The one chain every call operates on. A view layer holds no chain state.
@@ -879,6 +881,62 @@ def to_json(indent: int = 2) -> Dict[str, Any]:
     """
     return {"json": json.dumps(_CHAIN.to_dict(), indent=int(indent)),
             "suggested_filename": _suggested_filename(_CHAIN.name)}
+
+
+@_guard
+def notebook(carrier_hz: float = 1.5e9, spectral_hz: float = 1.0e3,
+             reference: Optional[Any] = None, at: str = "input",
+             gain_start_hz: float = 1.0e8, gain_stop_hz: float = 3.0e9,
+             spectral_start_hz: float = 1.0e-2,
+             spectral_stop_hz: float = 1.0e3,
+             source_root: str = "") -> Dict[str, Any]:
+    """
+    A notebook that analyses the current chain, as ``.ipynb`` text.
+
+    The chain travels inside it as the same file :func:`to_json` writes, so the
+    notebook runs beside a download or on its own. The arguments are the view's
+    operating point - the plane a budget is being read at, the spans the plots
+    are showing - so the notebook opens on the values that were on screen when
+    it was asked for rather than on a set of defaults nobody chose.
+
+    Only the document is generated here; every number in it is computed when it
+    runs, by these same modules. That is the same rule the browser follows, for
+    the same reason: one implementation of the physics, and a view (or a
+    generated notebook) that can only ask it questions.
+
+    ``source_root`` is a checkout for the notebook to import from. The core is
+    not published to an index, so a notebook that named no path would fail on
+    its first cell in any kernel that has not installed it; the browser build
+    passes the directory it was assembled from, and a script can pass its own.
+    """
+    document = notebook_export.build(
+        _CHAIN,
+        chain_json=json.dumps(_CHAIN.to_dict(), indent=2),
+        chain_filename=_suggested_filename(_CHAIN.name),
+        carrier_hz=float(carrier_hz), spectral_hz=float(spectral_hz),
+        reference=reference, at=at,
+        gain_span_hz=(float(gain_start_hz), float(gain_stop_hz)),
+        spectral_span_hz=(float(spectral_start_hz), float(spectral_stop_hz)),
+        generated_by=_generated_by(), source_root=str(source_root or ""),
+    )
+    stem = _suggested_filename(_CHAIN.name)[:-len(".json")]
+    return {"ipynb": json.dumps(document, indent=1),
+            "suggested_filename": f"{stem}_analysis.ipynb",
+            "chain_filename": _suggested_filename(_CHAIN.name)}
+
+
+def _generated_by() -> str:
+    """
+    What produced a notebook, for the notebook to say so.
+
+    A generated document that cannot name what generated it is the same problem
+    the build stamp in the page's top bar solves: version-dependent output with
+    no version on it.
+    """
+    import sys
+    core = provenance().get("analog_chain_core")
+    return (f"analog-chain-core {core or 'from source'} on Python "
+            f"{sys.version.split()[0]}")
 
 
 @_guard
