@@ -39,6 +39,84 @@ TEMPERATURE_PARAM = ParamSpec("temperature", default=4.0, label="Temperature",
                               help="Physical temperature of the component.")
 
 
+def _datasheet_curve(frequencies_hz, values):
+    """
+    An interpolator over one datasheet column that answers outside it as well.
+
+    Returns ``(curve, ceiling, span_hz)``:
+
+    * ``curve`` extends the endpoint slope past either end of the tabulated
+      range instead of filling with NaN. A NaN in a chain's dB sum takes the
+      whole total with it, so one part tabulated over a narrower band than the
+      sweep used to leave the chain with no gain curve at all rather than with
+      an estimate over the part of it nobody measured.
+    * ``ceiling`` is the highest tabulated value, which callers clamp the curve
+      to. An extension can therefore never claim more gain - or less loss - than
+      the datasheet actually measured, whichever end it runs off. There is
+      deliberately no clamp the other way: a part driven past its band loses
+      gain, and an extension that keeps losing it errs toward the pessimistic
+      side of a budget.
+    * ``span_hz`` is the tabulated range, low and high in Hz, which a model
+      reports as ``defined_span_hz``. Nothing in the returned curve marks that
+      boundary any more, which is exactly why the model has to state it.
+
+    Values outside the span are an indication, not a specification: an
+    amplifier's out-of-band response is set by its matching networks, a real
+    filter's far stopband is re-entrant, and coax loss climbs as sqrt(f). No
+    straight line predicts any of the three.
+    """
+    freqs = np.asarray(frequencies_hz, dtype=float)
+    tabulated = np.asarray(values, dtype=float)
+    curve = interpolate.interp1d(freqs, tabulated, fill_value='extrapolate',
+                                 bounds_error=False)
+    return (curve, float(tabulated.max()),
+            (float(freqs.min()), float(freqs.max())))
+
+
+class _DatasheetSpan:
+    """
+    Mixin for a model that answers outside its datasheet and says where it ends.
+
+    ``_span_hz`` is set at construction from the tabulated range (see
+    :func:`_datasheet_curve`); ``defined_span_hz`` is how the model states it.
+    A caller that needs the distinction has to ask, because the gain itself no
+    longer shows it - ``chain_api`` asks per stage and the GUI shades the rest
+    of the sweep.
+    """
+
+    #: (low_hz, high_hz) the gain curve is tabulated over; set at construction.
+    _span_hz = None
+
+    def defined_span_hz(self):
+        """The carrier band the gain curve is tabulated over, low and high in Hz."""
+        return self._span_hz
+
+
+class _DatasheetGain(_DatasheetSpan):
+    """
+    Gain from one tabulated curve, extrapolated and clamped as above.
+
+    For the models whose gain is a single column against frequency: the
+    amplifiers. ``_set_gain_response`` builds the curve and hands it back, so a
+    class can keep whatever attribute name it has always exposed it under.
+
+    Every amplifier here used to return NaN outside its table. That stated the
+    band the other way round - and ``chain_api`` bisected for the NaN to find it
+    - but it also meant a chain swept past its narrowest part had no total gain
+    anywhere, which is a worse answer than a flagged estimate.
+    """
+
+    def _set_gain_response(self, frequencies_hz, gains_db):
+        """Build the gain curve, and hand it back for a class to alias."""
+        (self._gain_curve, self._gain_ceiling_db,
+         self._span_hz) = _datasheet_curve(frequencies_hz, gains_db)
+        return self._gain_curve
+
+    def gain(self, carrier_frequency):
+        return np.minimum(self._gain_curve(carrier_frequency),
+                          self._gain_ceiling_db)
+
+
 class AD9082:
     """
     Legacy AD9082 helper, kept for backward compatibility with the scripts in
@@ -404,7 +482,7 @@ class GenericADC(ADCComponent):
 
 @register("amplifier.cryoelec_lna", category="Amplifiers",
           label="CryoElec LNA (~4 K)")
-class CryoElec_LNA(ActiveComponent):
+class CryoElec_LNA(_DatasheetGain, ActiveComponent):
     """Cryogenic LNA, roughly 4 K noise temperature."""
 
     def __init__(self, name=None):
@@ -421,11 +499,8 @@ class CryoElec_LNA(ActiveComponent):
             self.f_datasheet, self.noise_power_datasheet)
 
         self.gain_datasheet = np.asarray([32, 33, 32, 31, 30, 27, 25, 23, 22])
-        self.gain_f = interpolate.interp1d(
-            self.f_datasheet, self.gain_datasheet, bounds_error=False)
-
-    def gain(self, carrier_frequency):
-        return self.gain_f(carrier_frequency)
+        self.gain_f = self._set_gain_response(self.f_datasheet,
+                                              self.gain_datasheet)
 
     def noise(self, carrier_frequency, spectral_frequency):
         """Noise temperature varies with carrier; white in spectral frequency."""
@@ -435,7 +510,7 @@ class CryoElec_LNA(ActiveComponent):
 
 @register("amplifier.zx60_3018g_plus", category="Amplifiers",
           label="Mini-Circuits ZX60-3018G+")
-class ZX60_3018Gplus(ActiveComponent):
+class ZX60_3018Gplus(_DatasheetGain, ActiveComponent):
     """Room temperature amplifier, roughly 20 dB gain."""
 
     def __init__(self, name=None):
@@ -459,14 +534,13 @@ class ZX60_3018Gplus(ActiveComponent):
         self.gain_f = interpolate.UnivariateSpline(
             self.f_datasheet, self.gain_datasheet, ext=0)
 
+        # The measured response is what gain() answers with; the datasheet fit
+        # above is kept for comparison. So it is the measurement's span that
+        # this model reports as its band, and past 3 GHz the extension runs off
+        # a part specified to 3 GHz - flagged, and worth distrusting.
         meas_gainf = np.asarray([0, 58, 470, 961.8, 1302, 1806, 2356, 2939, 3000]) * 1e6
         meas_gain = [23, 23., 22.45, 21.6, 20.7, 20.1, 19., 17.85, 17.8]
-        self.meas_gain_func = interpolate.interp1d(
-            meas_gainf, meas_gain, bounds_error=False)
-
-    def gain(self, carrier_frequency):
-        # Measured response is preferred over the datasheet fit.
-        return self.meas_gain_func(carrier_frequency)
+        self.meas_gain_func = self._set_gain_response(meas_gainf, meas_gain)
 
     def noise(self, carrier_frequency, spectral_frequency):
         """Noise figure varies with carrier; white in spectral frequency."""
@@ -517,7 +591,7 @@ class Attenuator(PassiveComponent):
 
 @register("amplifier.asu_3ghz_lna", category="Amplifiers",
           label="ASU 3 GHz LNA (~6 K)")
-class ASU_3GHz_LNA(ActiveComponent):
+class ASU_3GHz_LNA(_DatasheetGain, ActiveComponent):
     """Cryogenic LNA, roughly 6 K noise temperature."""
 
     def __init__(self, name=None):
@@ -533,11 +607,8 @@ class ASU_3GHz_LNA(ActiveComponent):
 
         self.f_datasheet = 1e9 * np.asarray([0, 0.1, 0.5, 1, 1.5, 2, 2.5, 3])
         self.gain_datasheet = np.asarray([-25, 0, 27, 32, 30, 30, 32, 33])
-        self.gain_f = interpolate.interp1d(
-            self.f_datasheet, self.gain_datasheet, bounds_error=False)
-
-    def gain(self, carrier_frequency):
-        return self.gain_f(carrier_frequency)
+        self.gain_f = self._set_gain_response(self.f_datasheet,
+                                              self.gain_datasheet)
 
     def noise(self, carrier_frequency, spectral_frequency):
         """Noise temperature varies with carrier; white in spectral frequency."""
@@ -545,20 +616,26 @@ class ASU_3GHz_LNA(ActiveComponent):
                                 spectral_frequency)
 
 
-class _InterpolatedLNA(ActiveComponent):
+class _InterpolatedLNA(_DatasheetGain, ActiveComponent):
     """
-    Shared implementation for the fixed cryogenic LNA models.
+    Shared implementation for the fixed low-noise amplifier models, cryogenic
+    and room-temperature alike.
 
     Subclasses set ``gain_response`` and ``noise_response``, each a
     ``(frequencies_Hz, values)`` pair - gain in dB, noise as a temperature in K,
-    which is how these parts are specified and measured.
+    which is how the cold parts are specified and measured. A part quoted as a
+    noise figure instead converts at the subclass, ``290 * (10**(NF/10) - 1)``,
+    so the datasheet's own numbers stay legible in the source and only one unit
+    reaches the interpolator.
 
-    Both curves keep the sibling LNAs' out-of-band behaviour: NaN rather than an
-    extrapolated number, since an amplifier outside its band is not a gentler
-    version of itself the way a filter's stopband is, and the measured rolloff
-    at the edge says nothing about what happens past it. That NaN is also what
-    ``chain_api`` bisects for to find the band a spec panel plots over, so the
-    band shown is the measurement's own.
+    The two curves treat their edges differently, on purpose. Gain extrapolates
+    and reports its band (see :class:`_DatasheetGain`), because a chain's total
+    gain is a dB sum and one NaN in it leaves the whole sweep blank. Noise still
+    returns NaN outside its table, because there is no honest cap on it the way
+    there is on gain: a HEMT's noise rises steeply at both band edges and a
+    linear extension would understate it, which is the direction that flatters a
+    budget. So a carrier outside the band gets a flagged gain estimate and no
+    noise figure at all, and the budget says so rather than quoting one.
 
     ``noise_response`` must cover at least the span of ``gain_response``, or a
     chain would take gain from a component that reports no noise there.
@@ -575,8 +652,8 @@ class _InterpolatedLNA(ActiveComponent):
         gain_f, gain_db = self.gain_response
         self.f_datasheet = np.asarray(gain_f, dtype=float)
         self.gain_datasheet = np.asarray(gain_db, dtype=float)
-        self.gain_f = interpolate.interp1d(
-            self.f_datasheet, self.gain_datasheet, bounds_error=False)
+        self.gain_f = self._set_gain_response(self.f_datasheet,
+                                              self.gain_datasheet)
 
         noise_f, noise_temp_k = self.noise_response
         noise_freqs = np.asarray(noise_f, dtype=float)
@@ -601,9 +678,6 @@ class _InterpolatedLNA(ActiveComponent):
                 f"span at least the gain curve"
             )
 
-    def gain(self, carrier_frequency):
-        return self.gain_f(carrier_frequency)
-
     def noise(self, carrier_frequency, spectral_frequency):
         """Noise temperature varies with carrier; white in spectral frequency."""
         return flat_in_spectral(self.noise_f(carrier_frequency),
@@ -623,6 +697,9 @@ class CMT_CITCRYO1_12D(_InterpolatedLNA):
     because no digitised noise-versus-frequency curve was supplied for this
     part. Flat is what one number can honestly say; it is not a measurement of
     flatness, and a real HEMT's noise rises at both band edges.
+
+    Source: not stored - neither the s2p nor the datasheet is in this repo.
+    See component_references/README.md.
     """
 
     gain_response = (
@@ -650,6 +727,8 @@ class LNF_LNC1_5_6B(_InterpolatedLNA):
     part and the reason to read it before trusting the headline: 1.6 K over the
     middle of the band, but 6 K at 1.5 GHz, so the bottom decile of the band
     costs more than three times the quoted figure.
+
+    Source: not stored. See component_references/README.md.
     """
 
     gain_response = (
@@ -686,6 +765,8 @@ class LNF_LNC0_3_14B(_InterpolatedLNA):
     gain falls to about 20 dB and the noise roughly doubles. Only the 19.2 mW
     curve is modelled, since there is no bias parameter to select the other end
     with, so this is the part at full power and not at its quietest setting.
+
+    Source: not stored. See component_references/README.md.
     """
 
     gain_response = (
@@ -703,7 +784,54 @@ class LNF_LNC0_3_14B(_InterpolatedLNA):
     )
 
 
-class _InterpolatedFilter(PassiveComponent):
+#: ZX60-83LN-S+ noise figure in dB at VDD = +6 V, from the swept typical
+#: performance table. Kept as the datasheet quotes it; the class converts.
+_ZX60_83LN_NF_DB = np.asarray(
+    [1.57, 1.34, 1.28, 1.31, 1.35, 1.50, 1.54, 1.55, 1.54, 1.55, 1.57, 1.57,
+     1.53, 1.87, 2.21])
+
+
+@register("amplifier.zx60_83ln_s_plus", category="Amplifiers",
+          label="Mini-Circuits ZX60-83LN-S+")
+class ZX60_83LN_Splus(_InterpolatedLNA):
+    """
+    Room temperature low noise amplifier, 0.5-8 GHz, roughly 22 dB gain.
+
+    Mini-Circuits ZX60-83LN-S+ on its +6 V supply, from the swept "Typical
+    Performance Data" table rather than the four spot frequencies in the
+    electrical specifications. Noise figure runs 1.28 dB at 1 GHz to 2.21 dB at
+    8 GHz, which is 100-190 K equivalent - two orders of magnitude above the
+    cold parts here, and the reason the stage this sits behind decides what a
+    chain's noise figure actually is.
+
+    The datasheet also tabulates +5 V, where gain drops about 0.8 dB across the
+    band and noise figure is within 0.03 dB of these numbers. Only +6 V is
+    modelled, being the bias its specifications are headlined at; there is no
+    supply parameter to choose the other with.
+
+    Output P1dB (+18 to +21.7 dBm), IP3 (+28.5 to +38.9 dBm) and return loss
+    are on the datasheet and not here, nothing in this model representing
+    compression, intermodulation or matching.
+
+    Source: component_references/ZX60-83LN-S+.pdf, REV. C / ECO-015740.
+    """
+
+    gain_response = (
+        1e6 * np.asarray([500, 750, 1000, 1500, 2000, 2500, 3000, 3500, 4000,
+                          4500, 5000, 5500, 6000, 7000, 8000]),
+        np.asarray([22.16, 22.58, 22.61, 22.52, 22.40, 22.22, 21.94, 21.91,
+                    21.78, 21.60, 21.43, 21.37, 21.25, 20.58, 18.94]),
+    )
+    # Same 15 frequencies as the gain: the table sweeps both together, so the
+    # noise curve spans the gain curve exactly and nothing is extended here.
+    noise_response = (
+        1e6 * np.asarray([500, 750, 1000, 1500, 2000, 2500, 3000, 3500, 4000,
+                          4500, 5000, 5500, 6000, 7000, 8000]),
+        290.0 * (10 ** (_ZX60_83LN_NF_DB / 10) - 1),
+    )
+
+
+class _InterpolatedFilter(_DatasheetSpan, PassiveComponent):
     """
     Shared implementation for the fixed filter models, high- and low-pass alike.
 
@@ -728,24 +856,16 @@ class _InterpolatedFilter(PassiveComponent):
         f_datasheet, gain_datasheet = self.response
         freqs = np.asarray(f_datasheet, dtype=float)
         gains = np.asarray(gain_datasheet, dtype=float)
-        self.gain_f = interpolate.interp1d(
-            freqs, gains, fill_value='extrapolate', bounds_error=False)
+        # The ceiling is 0 dB here rather than the least loss measured, and
+        # there is a floor as well, so this keeps its own clamp instead of
+        # _DatasheetGain's: a passive filter cannot amplify, and a linear
+        # extension run far into a stopband would otherwise claim absurd
+        # rejection. Both bounds are inert inside the tabulated span.
+        self.gain_f, _ceiling, self._span_hz = _datasheet_curve(freqs, gains)
         self.gain_floor_db = float(gains.min())
-        self._span_hz = (float(freqs.min()), float(freqs.max()))
 
     def gain(self, carrier_frequency):
         return np.clip(self.gain_f(carrier_frequency), self.gain_floor_db, 0.0)
-
-    def defined_span_hz(self):
-        """
-        The carrier band the datasheet tabulates, low and high in Hz.
-
-        ``gain`` answers outside this band too, by extending the endpoint slope,
-        so the returned value is the model stating where it is quoting measured
-        data rather than estimating. A caller that needs the distinction has to
-        ask, because the gain itself no longer shows it.
-        """
-        return self._span_hz
 
 
 @register("filter.vhf1320p", category="Filters", label="Mini-Circuits VHF-1320+")
@@ -790,6 +910,8 @@ class FilterHP_VHF5050p(_InterpolatedFilter):
     Passband 5500-10000 MHz, 3 dB cutoff 5050 MHz nominal, 5 sections, SMA.
     Points are the datasheet's "Typical Performance Data at 25C" table, which
     spans 50 MHz to 15 GHz; outside that the response is extrapolated.
+
+    Source: component_references/VHF-5050+.pdf, REV. B.
     """
 
     response = (
@@ -811,6 +933,8 @@ class FilterLP_VLF6700p(_InterpolatedFilter):
     spans 50 MHz to 19.89 GHz; outside that the response is extrapolated. The
     passband does extend down to DC, and extending the shallow 50-500 MHz slope
     is a fair estimate there, but no measured point below 50 MHz is published.
+
+    Source: component_references/VLF-6700+.pdf.
     """
 
     response = (
@@ -821,21 +945,27 @@ class FilterLP_VLF6700p(_InterpolatedFilter):
     )
 
 
-class _TemperatureSwitchedCable(PassiveComponent):
+class _TemperatureSwitchedCable(_DatasheetSpan, PassiveComponent):
     """
     Shared implementation for cryogenic cables that carry separate warm and cold
     datasheet curves and pick between them by physical temperature.
 
-    Subclasses set ``frequencies_hz``, ``warm_db_per_m``, ``cold_db_per_m``,
-    ``transition_k`` and ``extrapolate``. The total loss is the per-metre curve
-    scaled by length, matching the original per-class implementations.
+    Subclasses set ``frequencies_hz``, ``warm_db_per_m``, ``cold_db_per_m`` and
+    ``transition_k``. The total loss is the per-metre curve scaled by length,
+    matching the original per-class implementations.
+
+    Both curves extrapolate, clamped to the least loss the datasheet measured so
+    an extension cannot turn a length of coax into an amplifier - a cable's loss
+    climbs smoothly as roughly sqrt(f), which is the most defensible
+    extrapolation in the library, and it is still flagged as one. The tabulated
+    span is reported through ``defined_span_hz`` and is the same for both
+    curves: the two temperatures are columns of one table.
     """
 
     frequencies_hz = None
     warm_db_per_m = None
     cold_db_per_m = None
     transition_k = 100
-    extrapolate = False
 
     def __init__(self, length_m, temperature=4, name=None):
         super().__init__(name=name, params={
@@ -845,21 +975,24 @@ class _TemperatureSwitchedCable(PassiveComponent):
         self.length = length_m
         self.temperature = temperature
 
-        fill = 'extrapolate' if self.extrapolate else np.nan
         freqs = np.asarray(self.frequencies_hz)
-        warmgain = np.asarray(self.warm_db_per_m) * self.length
-        coldgain = np.asarray(self.cold_db_per_m) * self.length
+        self.warm_gain, self._warm_ceiling_db, self._span_hz = _datasheet_curve(
+            freqs, np.asarray(self.warm_db_per_m) * self.length)
+        self.cold_gain, self._cold_ceiling_db, _span = _datasheet_curve(
+            freqs, np.asarray(self.cold_db_per_m) * self.length)
 
-        self.warm_gain = interpolate.interp1d(
-            freqs, warmgain, fill_value=fill, bounds_error=False)
-        self.cold_gain = interpolate.interp1d(
-            freqs, coldgain, fill_value=fill, bounds_error=False)
+    def _curve(self):
+        """The ``(curve, ceiling)`` pair this cable's temperature selects."""
+        if self.temperature > self.transition_k:
+            return self.warm_gain, self._warm_ceiling_db
+        return self.cold_gain, self._cold_ceiling_db
 
     def gain(self, carrier_frequency):
         """Insertion loss in dB, using the warm curve above ``transition_k``."""
-        if self.temperature > self.transition_k:
-            return self.warm_gain(carrier_frequency)
-        return self.cold_gain(carrier_frequency)
+        # Which curve is a subclass's business; the clamp is not, so it lives
+        # here and a cable that picks differently still cannot report gain.
+        curve, ceiling = self._curve()
+        return np.minimum(curve(carrier_frequency), ceiling)
 
 
 CABLE_PARAMS = (LENGTH_PARAM, TEMPERATURE_PARAM)
@@ -886,12 +1019,12 @@ class SMA_CuNi_cryo(_TemperatureSwitchedCable):
                 '300 or 4 (values are in Kelvin).')
         super().__init__(length_m=length_m, temperature=temperature, name=name)
 
-    def gain(self, carrier_frequency):
-        # Preserves the original exact-match behaviour rather than a threshold.
+    def _curve(self):
+        # Preserves the original exact-match behaviour rather than a threshold;
+        # the constructor above accepts no other temperature anyway.
         if self.temperature == 300:
-            return self.warm_gain(carrier_frequency)
-        elif self.temperature == 4:
-            return self.cold_gain(carrier_frequency)
+            return self.warm_gain, self._warm_ceiling_db
+        return self.cold_gain, self._cold_ceiling_db
 
 
 #################################################
@@ -952,7 +1085,6 @@ class BCB029_SS034_cryo(_TemperatureSwitchedCable):
     frequencies_hz = np.asarray([0.0, 0.5, 1.0, 5.0, 10.0, 20.0]) * 1e9
     warm_db_per_m = np.asarray([0.0, -7.3, -10.3, -23.0, -32.7, -46.4])
     cold_db_per_m = np.asarray([0.0, -4.7, -6.6, -14.8, -20.9, -29.5])
-    extrapolate = True
 
 
 @register("cable.bcb014_ss085", category="Cables",
@@ -966,7 +1098,6 @@ class BCB014_SS085_cryo(_TemperatureSwitchedCable):
     frequencies_hz = np.asarray([0.0, 0.5, 1.0, 5.0, 10.0, 20.0]) * 1e9
     warm_db_per_m = np.asarray([0.0, -3.0, -4.2, -9.4, -13.5, -19.2])
     cold_db_per_m = np.asarray([0.0, -1.9, -2.6, -5.9, -8.3, -11.7])
-    extrapolate = True
 
 
 @register("cable.bcb024_sp034", category="Cables",
@@ -980,7 +1111,6 @@ class BCB024_SP034_cryo(_TemperatureSwitchedCable):
     frequencies_hz = np.asarray([0.0, 0.5, 1.0, 5.0, 10.0, 20.0]) * 1e9
     warm_db_per_m = np.asarray([0.0, -2.1, -3.0, -6.7, -9.5, -13.4])
     cold_db_per_m = np.asarray([0.0, -1.0, -1.5, -3.2, -4.6, -6.5])
-    extrapolate = True
 
 
 @register("cable.bcb012_nbti034", category="Cables",
@@ -995,34 +1125,34 @@ class BCB012_NbTi034_cryo(_TemperatureSwitchedCable):
     frequencies_hz = np.asarray([0.0, 0.5, 1.0, 5.0, 10.0, 20.0]) * 1e9
     warm_db_per_m = np.asarray([0.0, -6.8, -9.6, -21.6, -30.5, -43.1])
     cold_db_per_m = np.asarray([0.0, -0.5, -0.5, -0.5, -0.5, -0.5])
-    extrapolate = True
 
 
-class _RoomTemperatureCable(PassiveComponent):
+class _RoomTemperatureCable(_DatasheetSpan, PassiveComponent):
     """
     Shared implementation for room-temperature cables with a single loss curve.
 
     ``db_per_m`` is per-metre loss in dB and must be negative; the total is
-    scaled by length exactly once, in gain().
+    scaled by length exactly once, in gain(). The curve extrapolates and is
+    clamped exactly as :class:`_TemperatureSwitchedCable`'s is.
     """
 
     frequencies_hz = None
     db_per_m = None
-    extrapolate = False
 
     def __init__(self, length_m, name=None):
         super().__init__(name=name, params={"length_m": length_m})
         self.length = length_m
 
-        fill = 'extrapolate' if self.extrapolate else np.nan
-        self.atten_per_m = interpolate.interp1d(
-            np.asarray(self.frequencies_hz),
-            np.asarray(self.db_per_m, dtype=float),
-            fill_value=fill, bounds_error=False)
+        (self.atten_per_m, self._ceiling_db_per_m,
+         self._span_hz) = _datasheet_curve(self.frequencies_hz, self.db_per_m)
 
     def gain(self, carrier_frequency):
         """Total insertion loss in dB over ``self.length`` metres."""
-        return self.atten_per_m(carrier_frequency) * self.length
+        # Clamped per metre and then scaled: length only ever multiplies the
+        # loss, so clamping before or after it is the same number for any
+        # length >= 0, and the cap stays the datasheet figure it came from.
+        return np.minimum(self.atten_per_m(carrier_frequency),
+                          self._ceiling_db_per_m) * self.length
 
 
 @register("cable.sma_generic", category="Cables",
@@ -1062,7 +1192,6 @@ class SMA_RG58C_cables(_RoomTemperatureCable):
     # Datasheet lists attenuation as positive dB/100 m; negated here because
     # gain() must return loss as a negative gain.
     db_per_m = -np.asarray([0.0, 4.59, 16.08, 65.62, 196.85]) / 100.0
-    extrapolate = True
 
 
 @register("cable.rg174a", category="Cables", label="RG174A/U (room temp)",
@@ -1077,4 +1206,3 @@ class SMA_RG174A_cables(_RoomTemperatureCable):
     # Datasheet lists attenuation as positive dB/100 m; negated here because
     # gain() must return loss as a negative gain.
     db_per_m = -np.asarray([0.0, 27.56, 62.34, 104.99]) / 100.0
-    extrapolate = True

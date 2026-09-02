@@ -10,9 +10,19 @@ Some snapshotted values are known to be physically wrong - see KNOWN_BAD below.
 Those entries are recorded so the refactor is provably behaviour-preserving, and
 are flagged so nobody mistakes the snapshot for a statement of correctness.
 
-To regenerate after an *intentional* numerical change:
+To regenerate after an *intentional* numerical change, name what changed:
+    python tests/test_characterization.py --regenerate LNF_LNC1_5_6B
+Every other entry is written back from disk unaltered, so the diff is the
+entries named and nothing else, and anything still disagreeing with its model
+is listed rather than quietly blessed.
+
+Naming nothing rewrites the whole file:
     python tests/test_characterization.py --regenerate
-and review the diff to tests/data/golden_components.json carefully.
+which re-blesses every difference in the tree at once. Reach for it when
+creating the file or when the tree holds exactly one change; adding a component
+with someone else's numerical change in flight is how an unreviewed change gets
+recorded as the expectation. Either way, review the diff to
+tests/data/golden_components.json carefully.
 """
 
 import json
@@ -50,6 +60,7 @@ COMPONENT_SPECS = {
                    "gain_db": 0.0},
     "ASU_3GHz_LNA": {},
     "ZX60_3018Gplus": {},
+    "ZX60_83LN_Splus": {},
     "CryoElec_LNA": {},
     "CMT_CITCRYO1_12D": {},
     "LNF_LNC1_5_6B": {},
@@ -143,6 +154,63 @@ def load_golden():
         return json.load(fh)
 
 
+def _write_golden(snapshot):
+    """Write the file in the one format the byte-for-byte guarantee needs."""
+    os.makedirs(os.path.dirname(GOLDEN_PATH), exist_ok=True)
+    with open(GOLDEN_PATH, "w") as fh:
+        json.dump(snapshot, fh, indent=2, sort_keys=True)
+
+
+def regenerate(names=None):
+    """
+    Rewrite the golden file - all of it, or only the entries in ``names``.
+
+    A whole-file rewrite re-blesses every difference in the working tree at
+    once. That is fine when the only difference is the one being blessed, and a
+    trap otherwise: adding a component runs this, so an unrelated numerical
+    change someone has in flight gets written into the snapshot and lands in
+    the commit that added the component, under a message that says nothing
+    about it. The change is then invisible - it is recorded as the expectation,
+    and the test that would have flagged it now passes.
+
+    Naming entries avoids that. Only those are recomputed; every other entry is
+    written back from the value already on disk, in the same format, so it
+    comes out byte for byte identical and the diff is exactly the entries
+    asked for.
+
+    Returns ``(written, stale)``: what was rewritten, and which entries still
+    disagree with their model afterwards - the ones a selective rewrite has
+    deliberately left for someone to look at. ``stale`` is empty after a whole-
+    file rewrite, by construction.
+    """
+    if names:
+        unknown = sorted(set(names) - set(COMPONENT_SPECS))
+        if unknown:
+            raise SystemExit(
+                f"not characterized: {', '.join(unknown)}\n"
+                f"known components are: {', '.join(sorted(COMPONENT_SPECS))}")
+        if not os.path.exists(GOLDEN_PATH):
+            raise SystemExit(
+                f"{GOLDEN_PATH} does not exist, so there is nothing to preserve"
+                f" around the named entries; run --regenerate with no names to "
+                f"create it")
+        snapshot = load_golden()
+        for name in names:
+            snapshot[name] = _snapshot_component(name, COMPONENT_SPECS[name])
+        written = sorted(set(names))
+    else:
+        snapshot = build_snapshot()
+        written = sorted(snapshot)
+
+    _write_golden(snapshot)
+
+    # Compared the same way test_component_matches_golden compares, so "stale"
+    # here means precisely "would fail that test".
+    stale = [name for name, kwargs in sorted(COMPONENT_SPECS.items())
+             if snapshot.get(name) != _snapshot_component(name, kwargs)]
+    return written, stale
+
+
 @pytest.mark.parametrize("name", sorted(COMPONENT_SPECS))
 def test_component_matches_golden(name):
     """Each component reproduces its recorded gain/noise exactly."""
@@ -177,6 +245,59 @@ def test_every_component_is_characterized():
     assert not missing, f"components with no characterization snapshot: {sorted(missing)}"
 
 
+def test_naming_an_entry_leaves_an_unrelated_change_alone(tmp_path, monkeypatch):
+    """
+    The reason --regenerate takes names: someone else's numerical change, in
+    flight in the same tree, must survive being adjacent to a component being
+    added. It stays on disk as it was and is reported, rather than being
+    recorded as the expectation by a rewrite that never mentioned it.
+    """
+    golden = build_snapshot()
+    in_flight, adding = "Attenuator", "ZX60_3018Gplus"
+    # Stands in for a model whose numbers have moved since it was snapshotted.
+    golden[in_flight]["gain"]["1000000000.0"] = -12345.0
+
+    path = tmp_path / "golden_components.json"
+    monkeypatch.setattr(sys.modules[__name__], "GOLDEN_PATH", str(path))
+    _write_golden(golden)
+
+    written, stale = regenerate([adding])
+
+    assert written == [adding]
+    assert in_flight in stale, "an entry left disagreeing was not reported"
+    assert adding not in stale
+    after = json.loads(path.read_text())
+    assert after[in_flight] == golden[in_flight], "an unnamed entry was rewritten"
+    assert after[adding] == _snapshot_component(adding, COMPONENT_SPECS[adding])
+
+
+def test_naming_a_current_entry_rewrites_no_bytes(tmp_path, monkeypatch):
+    """
+    The byte-for-byte half of that promise. Rewriting an entry that already
+    agrees with its model has to leave the file alone entirely - a reformat or
+    a reordered key would put every other entry in the diff and bury the one
+    line that matters.
+    """
+    path = tmp_path / "golden_components.json"
+    monkeypatch.setattr(sys.modules[__name__], "GOLDEN_PATH", str(path))
+    _write_golden(build_snapshot())
+    before = path.read_bytes()
+
+    regenerate(["Attenuator"])
+
+    assert path.read_bytes() == before
+
+
+def test_regenerating_an_unknown_name_refuses(tmp_path, monkeypatch):
+    """A typo must not silently write nothing and report success."""
+    path = tmp_path / "golden_components.json"
+    monkeypatch.setattr(sys.modules[__name__], "GOLDEN_PATH", str(path))
+    _write_golden(build_snapshot())
+
+    with pytest.raises(SystemExit, match="Attenuatorr"):
+        regenerate(["Attenuatorr"])
+
+
 def test_known_bad_components_are_still_documented():
     """Keeps KNOWN_BAD honest: every entry must name a real component."""
     unknown = set(KNOWN_BAD) - set(COMPONENT_SPECS)
@@ -185,9 +306,24 @@ def test_known_bad_components_are_still_documented():
 
 if __name__ == "__main__":
     if "--regenerate" in sys.argv:
-        os.makedirs(os.path.dirname(GOLDEN_PATH), exist_ok=True)
-        with open(GOLDEN_PATH, "w") as fh:
-            json.dump(build_snapshot(), fh, indent=2, sort_keys=True)
-        print(f"wrote {GOLDEN_PATH}")
+        argument_names = [arg for arg
+                          in sys.argv[sys.argv.index("--regenerate") + 1:]
+                          if not arg.startswith("-")]
+        written, stale = regenerate(argument_names)
+
+        if argument_names:
+            print(f"rewrote {len(written)} of {len(COMPONENT_SPECS)} entries "
+                  f"in {GOLDEN_PATH}:")
+            for name in written:
+                print(f"    {name}")
+        else:
+            print(f"wrote {GOLDEN_PATH}, all {len(written)} entries")
+
+        if stale:
+            print(f"\nleft alone, and still disagreeing with their model:")
+            for name in stale:
+                print(f"    {name}")
+            print("Each of those is a numerical change to review on its own "
+                  "terms.\nRegenerate them by name once you have.")
     else:
         print(__doc__)
