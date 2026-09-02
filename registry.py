@@ -13,9 +13,10 @@ Why a registry rather than ``getattr(hardware_models, class_name)``:
 * Only deliberately registered classes are offered to the user. Scanning a
   module with ``inspect.getmembers`` also picks up imported base classes, which
   are abstract and crash when instantiated.
-* Each component declares its own parameters - name, unit, range, default - so
-  the GUI builds inputs from a real specification instead of guessing from
-  parameter-name substrings, and the serializer records exactly those values.
+* Each component declares its own parameters - name, unit, range, default, and
+  the sub-box any of them are grouped under - so the GUI builds and lays out its
+  inputs from a real specification instead of guessing from parameter-name
+  substrings, and the serializer records exactly those values.
 """
 
 from dataclasses import dataclass, field
@@ -42,6 +43,23 @@ class ParamSpec:
     #: If set, the only accepted values. Lets the GUI offer a choice widget
     #: instead of a free input that would fail validation in the constructor.
     choices: Optional[Tuple[Any, ...]] = None
+    #: If set, the heading of a sub-box the GUI collects this parameter into,
+    #: with its neighbours declaring the same group. A component with several
+    #: knobs describing one thing - a DAC's noise skirt is four of them - reads
+    #: as a flat list of six otherwise, with nothing saying which four belong
+    #: together. Declared here for the same reason the range and the unit are:
+    #: so the view groups what the component says goes together rather than
+    #: matching on parameter-name prefixes.
+    group: Optional[str] = None
+
+    #: Strings a ``bool`` parameter accepts, so that a value arriving as text -
+    #: from a hand-edited chain file, or from a view that submits its inputs as
+    #: strings - reads as what it says. ``bool("false")`` is True, which for a
+    #: flag like ``noiseless`` silently means the opposite of what the file
+    #: records; that is exactly the quiet substitution this format exists to
+    #: prevent, so anything not listed here is refused rather than truthy.
+    _BOOL_STRINGS = {"true": True, "false": False, "1": True, "0": False,
+                     "yes": True, "no": False}
 
     @property
     def display_label(self) -> str:
@@ -54,8 +72,24 @@ class ParamSpec:
         if self.kind == "int":
             return int(value)
         if self.kind == "bool":
-            return bool(value)
+            return self._coerce_bool(value)
         return str(value)
+
+    @classmethod
+    def _coerce_bool(cls, value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            try:
+                return cls._BOOL_STRINGS[value.strip().lower()]
+            except KeyError:
+                raise ValueError(
+                    f"{value!r} is not a boolean; write one of "
+                    f"{', '.join(sorted(cls._BOOL_STRINGS))}"
+                ) from None
+        if isinstance(value, int) and value in (0, 1):
+            return bool(value)
+        raise TypeError(f"{value!r} is not a boolean")
 
     def validate(self, value: Any) -> Any:
         """Coerce and range-check, raising ValueError with a usable message."""
@@ -136,6 +170,35 @@ def ensure_loaded() -> None:
         importlib.import_module(module_name)
 
 
+def _check_groups(type_id: str, params: Tuple[ParamSpec, ...]) -> None:
+    """
+    Require each ``group`` to be one unbroken run of parameters.
+
+    A view renders these in declared order, so a group interrupted by a
+    parameter from outside it becomes two sub-boxes with the same heading -
+    which reads as two different things sharing a name. Checked at import, where
+    the fix is to move one line, rather than being noticed in the GUI later.
+    """
+    # An ungrouped parameter ends the run it interrupts, so `previous` tracks
+    # None as a value rather than skipping over it - that is the case the check
+    # exists for.
+    seen = set()
+    previous = None
+    for spec in params:
+        if spec.group == previous:
+            continue
+        if spec.group is not None:
+            if spec.group in seen:
+                raise ValueError(
+                    f"{type_id} declares parameter group {spec.group!r} in "
+                    f"more than one run; a group must be contiguous in the "
+                    f"parameter tuple or the GUI shows it as two boxes with "
+                    f"one heading"
+                )
+            seen.add(spec.group)
+        previous = spec.group
+
+
 def register(type_id: str, *, category: str, label: Optional[str] = None,
              params: Tuple[ParamSpec, ...] = (),
              aliases: Tuple[str, ...] = ()) -> Callable[[type], type]:
@@ -150,6 +213,7 @@ def register(type_id: str, *, category: str, label: Optional[str] = None,
     def decorator(cls: type) -> type:
         if type_id in _ENTRIES:
             raise ValueError(f"duplicate component type_id {type_id!r}")
+        _check_groups(type_id, tuple(params))
 
         # Always accept the Python class name, so pre-registry files still load.
         all_aliases = tuple(dict.fromkeys((cls.__name__,) + tuple(aliases)))

@@ -330,6 +330,30 @@ def test_a_chain_without_converters_generates(tmp_path, monkeypatch):
     assert namespace["budget"].reference == "Attenuator1 (input)"
 
 
+def test_a_generic_noiseless_digitizer_survives_the_notebook(tmp_path,
+                                                             monkeypatch):
+    """
+    A boolean parameter is the first of its kind in the library, and the chain
+    reaches the notebook as an embedded literal rather than through JSON alone.
+    ``json.dumps`` would write ``true``, which is not Python - so run the cells
+    and check the flag arrived as itself, still keeping the converters out of
+    the budget.
+    """
+    assert chain_api.load_preset("cryo_example")["ok"]
+    assert chain_api.set_digitizer(
+        "converter.generic_dac", "converter.generic_adc",
+        {"noiseless": True}, {"noiseless": True})["ok"]
+
+    _result, document = generate(carrier_hz=CARRIER, spectral_hz=SPECTRAL,
+                                 reference="LNA", at="input")
+    namespace = run_cells(document, tmp_path, monkeypatch)
+
+    chain = namespace["chain"]
+    assert chain.dac.noiseless is True and chain.adc.noiseless is True
+    assert {c.label for c in namespace["budget"].contributions}.isdisjoint(
+        {"GenericDAC", "GenericADC"})
+
+
 def test_one_component_and_no_variant_target(tmp_path, monkeypatch):
     """
     A chain whose only component has no numeric parameter to move gets no

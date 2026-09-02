@@ -39,6 +39,14 @@ NON_DEFAULT = {
     "attenuation": -13.5,
     "carrier_power_dbm": -22.5,
     "gain_db": 3.25,
+    "phase_noise_dbc_per_hz": -97.5,
+    "phase_noise_offset_hz": 1000.0,
+    "phase_noise_slope_db_per_decade": -20.0,
+    "noise_density_dbm_per_hz": -151.5,
+    # True, so the non-default pass exercises the noiseless branch. A flag whose
+    # non-default value equalled its default would round-trip whatever it was
+    # set to, which is the one thing this test is not meant to allow.
+    "noiseless": True,
 }
 
 
@@ -210,6 +218,59 @@ def test_missing_parameter_records_a_warning():
 def test_out_of_range_parameter_is_rejected():
     with pytest.raises(ValueError, match="above the maximum"):
         registry.create("attenuator", {"attenuation": 50, "temperature": 300})
+
+
+@pytest.mark.parametrize("written,expected", [
+    (True, True), (False, False),
+    ("true", True), ("false", False),
+    ("True", True), (" FALSE ", False),
+    (1, True), (0, False),
+])
+def test_a_boolean_parameter_reads_as_what_the_file_says(written, expected):
+    """
+    A flag is the one parameter type where a coercion mistake inverts the
+    record instead of perturbing it, so the accepted spellings are pinned.
+    """
+    component = registry.create("converter.generic_adc", {
+        "noise_density_dbm_per_hz": -140.0, "noiseless": written,
+        "gain_db": 0.0})
+    assert component.params["noiseless"] is expected
+
+
+@pytest.mark.parametrize("written", ["off", "nope", "", "2", 2, 1.0, None])
+def test_a_boolean_parameter_refuses_anything_it_cannot_read(written):
+    """
+    ``bool("off")`` is True, and a chain file saying ``noiseless: "off"`` that
+    loaded as noiseless=True would be the format's original failure - a saved
+    setting silently becoming its opposite. Refused instead.
+    """
+    with pytest.raises(ValueError, match="expects bool"):
+        registry.create("converter.generic_adc", {
+            "noise_density_dbm_per_hz": -140.0, "noiseless": written,
+            "gain_db": 0.0})
+
+
+def test_a_split_parameter_group_is_refused_at_registration():
+    """
+    Grouping is presentation, but a group interrupted by an outside parameter
+    becomes two sub-boxes with one heading - so it is caught where the fix is to
+    move one line, not left to be noticed in the GUI.
+    """
+    from registry import ParamSpec, _check_groups
+
+    split = (ParamSpec("a", default=0.0, group="Noise"),
+             ParamSpec("b", default=0.0),
+             ParamSpec("c", default=0.0, group="Noise"))
+    with pytest.raises(ValueError, match="more than one run"):
+        _check_groups("test.split", split)
+
+    # Contiguous, and interleaving two groups back to back, are both fine.
+    _check_groups("test.ok", (
+        ParamSpec("a", default=0.0),
+        ParamSpec("b", default=0.0, group="Noise"),
+        ParamSpec("c", default=0.0, group="Noise"),
+        ParamSpec("d", default=0.0, group="Levels"),
+        ParamSpec("e", default=0.0)))
 
 
 def test_non_serializable_parameter_is_rejected_at_construction():

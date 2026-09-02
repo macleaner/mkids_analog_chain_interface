@@ -114,10 +114,16 @@ def catalog() -> Dict[str, Any]:
 
     This is the form schema for the view: ``kind`` selects the widget,
     ``minimum``/``maximum``/``step`` bound it, ``choices`` makes it a select,
-    and ``unit``/``help`` label it. Submitted values should come back through
-    :func:`add_component` or :func:`set_param`, which validate them with the
-    same ``ParamSpec.validate`` the Qt panel uses - so the constraints and the
-    error messages are declared exactly once, in ``registry.py``.
+    ``unit``/``help`` label it, and ``group`` - where set - is the heading of a
+    sub-box the parameter belongs in, shared with the neighbours around it in
+    this list. Submitted values should come back through :func:`add_component`
+    or :func:`set_param`, which validate them with the same
+    ``ParamSpec.validate`` the Qt panel uses - so the constraints and the error
+    messages are declared exactly once, in ``registry.py``.
+
+    Parameter order is the registry's, and a group is guaranteed contiguous in
+    it, so a view can render straight down the list and open a box when the
+    group changes.
 
     ``role`` says which call installs the entry: ``component`` ones are
     appended with :func:`add_component`, while ``dac``/``adc`` ones are chain
@@ -143,6 +149,7 @@ def catalog() -> Dict[str, Any]:
                     "step": spec.step,
                     "help": spec.help,
                     "choices": list(spec.choices) if spec.choices else None,
+                    "group": spec.group,
                 } for spec in entry.params],
             })
         categories.append({"category": category, "components": items})

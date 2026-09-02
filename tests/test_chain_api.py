@@ -519,8 +519,100 @@ def test_catalog_says_which_entries_are_endpoints():
              for item in group["components"]}
     assert roles["converter.ad9082_dac"] == "dac"
     assert roles["converter.ad9082_adc"] == "adc"
+    assert roles["converter.generic_dac"] == "dac"
+    assert roles["converter.generic_adc"] == "adc"
     assert roles["amplifier.asu_3ghz_lna"] == "component"
     assert roles["cable.sma_ss086_cryo"] == "component"
+
+
+def test_the_catalog_carries_the_groups_a_card_is_laid_out_from():
+    """
+    The view opens a sub-box when a parameter's ``group`` changes, so the schema
+    has to carry it - and carry it in an order where that works. The Generic
+    DAC's four noise knobs are one run, with the carrier power and the gain
+    outside it: what the DAC puts out is not part of its skirt.
+    """
+    entry = next(item for group in chain_api.catalog()["categories"]
+                 for item in group["components"]
+                 if item["type_id"] == "converter.generic_dac")
+    groups = [(p["name"], p["group"]) for p in entry["params"]]
+    assert groups == [
+        ("carrier_power_dbm", None),
+        ("phase_noise_dbc_per_hz", "Noise parameters"),
+        ("phase_noise_offset_hz", "Noise parameters"),
+        ("phase_noise_slope_db_per_decade", "Noise parameters"),
+        ("noiseless", "Noise parameters"),
+        ("gain_db", None),
+    ]
+
+
+def test_every_declared_group_is_one_unbroken_run():
+    """
+    A group split in two renders as two sub-boxes under one heading, which reads
+    as two different things sharing a name. ``registry.register`` refuses that at
+    import; this asserts the whole catalog is in fact laid out that way, for the
+    view that renders straight down the list.
+    """
+    for category in chain_api.catalog()["categories"]:
+        for item in category["components"]:
+            runs = []
+            for param in item["params"]:
+                if not runs or runs[-1] != param["group"]:
+                    runs.append(param["group"])
+            named = [g for g in runs if g is not None]
+            assert len(named) == len(set(named)), (
+                f"{item['type_id']} renders a group twice: {runs}")
+
+
+def test_a_generic_digitizer_can_replace_the_modelled_one():
+    """
+    The point of the generic converters: evaluate this chain against an
+    arbitrary digitizer, stated rather than fitted. They install through the
+    same call as any other converter and appear in the budget as any other
+    source.
+    """
+    result = chain_api.set_digitizer(
+        "converter.generic_dac", "converter.generic_adc",
+        {"carrier_power_dbm": -10.0, "phase_noise_dbc_per_hz": -80.0,
+         "phase_noise_offset_hz": 1000.0,
+         "phase_noise_slope_db_per_decade": -10.0,
+         "noiseless": False, "gain_db": 0.0},
+        {"noise_density_dbm_per_hz": -145.0, "noiseless": False,
+         "gain_db": 0.0})
+    assert result["ok"], result.get("error")
+    assert result["digitizer"]["dac"]["params"]["phase_noise_dbc_per_hz"] == -80.0
+
+    rows = chain_api.budget("LNA", "input", CARRIER, SPECTRAL)["rows"]
+    sources = {row["source"] for row in rows}
+    assert {"GenericDAC", "GenericADC"} <= sources
+
+
+def test_a_noiseless_digitizer_leaves_the_components_to_be_judged():
+    """
+    Noiseless is not "turned down": the two converters must be *absent* from the
+    budget, and the budget identical to the one for a chain with no converters
+    installed at all. That is the question the flag exists to answer - how good
+    is this chain, separately from how good the digitizer on each end is.
+    """
+    ideal = {"noiseless": True, "gain_db": 0.0}
+    chain_api.set_digitizer(
+        "converter.generic_dac", "converter.generic_adc",
+        {"carrier_power_dbm": -10.0, "phase_noise_dbc_per_hz": -80.0,
+         "phase_noise_offset_hz": 1000.0,
+         "phase_noise_slope_db_per_decade": -10.0, **ideal},
+        {"noise_density_dbm_per_hz": -145.0, **ideal})
+    with_ideal = chain_api.budget("LNA", "input", CARRIER, SPECTRAL)
+    assert {"GenericDAC", "GenericADC"}.isdisjoint(
+        row["source"] for row in with_ideal["rows"])
+
+    # Both ends removed. The generic converters default to 0 dB of gain, so the
+    # gain from the chain input to the LNA is the same either way and the two
+    # totals are comparable at all - which is why this asserts equality rather
+    # than merely "smaller than with a real digitizer".
+    chain_api.set_digitizer()
+    without = chain_api.budget("LNA", "input", CARRIER, SPECTRAL)
+    assert with_ideal["total_w_per_hz"] == pytest.approx(
+        without["total_w_per_hz"], rel=1e-12)
 
 
 # ------------------------------------------------------------ component specs

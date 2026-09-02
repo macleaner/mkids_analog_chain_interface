@@ -14,6 +14,8 @@ physical bugs in a few models are documented in ``tests/test_characterization.py
 under KNOWN_BAD rather than being quietly fixed here.
 """
 
+from dataclasses import replace
+
 import numpy as np
 import scipy.interpolate as interpolate
 from scipy.optimize import curve_fit
@@ -194,6 +196,210 @@ class AD9082_ADC(ADCComponent):
         """
         return flat_in_spectral(self.noise_f(carrier_frequency),
                                 spectral_frequency)
+
+
+# Shared by the two generic converters: the switch that turns a converter into
+# an ideal one. It exists so a chain can be judged on the components alone -
+# with a real digitizer at both ends the converters routinely dominate the
+# budget, and "how good is this chain" and "how good is this chain with this
+# digitizer" are different questions. Setting the level knobs to their minimum
+# would not answer the first one: -220 dBm/Hz is small, not absent, and it still
+# appears in the budget as a line to be discounted by eye.
+NOISELESS_PARAM = ParamSpec(
+    "noiseless", default=False, kind="bool", label="Noiseless",
+    help="Make this converter an ideal one: it still applies its gain and, for "
+         "a DAC, still sets the carrier, but contributes no noise at all and so "
+         "drops out of the budget entirely.")
+
+# The Generic DAC's four noise knobs are collected under one heading in the GUI,
+# so the two that describe what the DAC *puts out* - the carrier power and the
+# gain - are not read as part of the skirt. The carrier power does scale the
+# skirt, being what it is quoted relative to, but it is the output level first
+# and a noise setting only consequently, so it stays outside the box; the help
+# text on both is where that relationship is stated.
+NOISE_GROUP = "Noise parameters"
+
+
+@register("converter.generic_dac", category="Converters", label="Generic DAC",
+          params=(
+              ParamSpec("carrier_power_dbm", default=0.0, label="Carrier Power",
+                        unit="dBm", minimum=-80.0, maximum=30.0, step=1.0,
+                        help="Carrier power at the DAC output. The phase-noise "
+                             "skirt scales with it, so raising the carrier "
+                             "raises the noise by the same number of dB."),
+              ParamSpec("phase_noise_dbc_per_hz", default=-85.0,
+                        label="Phase Noise", unit="dBc/Hz",
+                        minimum=-200.0, maximum=0.0, step=1.0,
+                        group=NOISE_GROUP,
+                        help="Single-sideband phase noise at the reference "
+                             "offset below, relative to the carrier."),
+              ParamSpec("phase_noise_offset_hz", default=1.0,
+                        label="Quoted At", unit="Hz",
+                        minimum=0.001, maximum=1e12, step=1.0,
+                        group=NOISE_GROUP,
+                        help="Offset from the carrier the figure above is "
+                             "quoted at. Datasheets usually pick 1 kHz or "
+                             "10 kHz; this defaults to 1 Hz. Bounded away from "
+                             "0 Hz, which is the carrier and not an offset "
+                             "from it."),
+              ParamSpec("phase_noise_slope_db_per_decade", default=-10.0,
+                        label="Slope", unit="dB/decade",
+                        minimum=-40.0, maximum=0.0, step=1.0,
+                        group=NOISE_GROUP,
+                        help="How the skirt falls with offset. -10 dB/decade "
+                             "is 1/f in power, -20 is 1/f^2, and 0 is a white "
+                             "phase-noise floor."),
+              replace(NOISELESS_PARAM, group=NOISE_GROUP),
+              ParamSpec("gain_db", default=0.0, label="Gain", unit="dB",
+                        minimum=-50.0, maximum=50.0, step=0.5),
+          ))
+class GenericDAC(DACComponent):
+    """
+    Configurable DAC: a carrier at a chosen power with a power-law noise skirt.
+
+    For evaluating a chain against an arbitrary digitizer rather than the one
+    part this library happens to model. The skirt is a straight line on a
+    log-log plot, stated the way a datasheet states it - a level in dBc/Hz, the
+    offset it is quoted at, and a slope in dB/decade:
+
+        L(f) = phase_noise_dbc_per_hz
+               + slope * log10(f / phase_noise_offset_hz)      [dBc/Hz]
+
+    and the density in W/Hz is that plus the carrier power. Two decisions worth
+    naming:
+
+    * There is no broadband floor term. The AD9082 model here fits one and it
+      comes out at zero, so a pure power law is what the library's real DAC
+      already is; adding a floor knob to the generic one would offer a shape
+      nothing has been checked against. A white floor is instead reached by
+      setting the slope to 0.
+    * The defaults reproduce the AD9082's simple phase-noise model exactly
+      (-85 dBc/Hz at 1 Hz falling 10 dB/decade), so an unedited Generic DAC is
+      a familiar part rather than an arbitrary one, and swapping the two shows
+      what the datasheet SNR curve on the ADC side is worth on its own.
+
+    The declared slope range stops at 0, so a skirt that rises with offset -
+    which is not a phase-noise skirt - is refused by anything going through the
+    registry: the GUI, and a chain loaded from a file. Constructing the class
+    directly skips that, as it does for every component here.
+    """
+
+    def __init__(self, carrier_power_dbm=0.0, phase_noise_dbc_per_hz=-85.0,
+                 phase_noise_offset_hz=1.0,
+                 phase_noise_slope_db_per_decade=-10.0, noiseless=False,
+                 gain_db=0.0, name=None):
+        super().__init__(name=name, params={
+            "carrier_power_dbm": carrier_power_dbm,
+            "phase_noise_dbc_per_hz": phase_noise_dbc_per_hz,
+            "phase_noise_offset_hz": phase_noise_offset_hz,
+            "phase_noise_slope_db_per_decade": phase_noise_slope_db_per_decade,
+            "noiseless": noiseless,
+            "gain_db": gain_db,
+        })
+        # A zero or negative reference offset makes log10(f/f_ref) meaningless
+        # and would return inf or nan for every offset rather than failing, so
+        # it is refused here and not only by the registry's parameter range -
+        # the class is constructed directly by scripts and by the
+        # characterization tests too.
+        if not phase_noise_offset_hz > 0:
+            raise ValueError(
+                f"phase_noise_offset_hz must be positive, got "
+                f"{phase_noise_offset_hz!r}: the skirt is quoted at an offset "
+                f"from the carrier, and 0 Hz is the carrier itself.")
+        self.carrier_power_dbm = carrier_power_dbm
+        self.phase_noise_dbc_per_hz = phase_noise_dbc_per_hz
+        self.phase_noise_offset_hz = phase_noise_offset_hz
+        self.phase_noise_slope_db_per_decade = phase_noise_slope_db_per_decade
+        self.noiseless = noiseless
+        self.gain_db = gain_db
+
+    def gain(self, carrier_frequency):
+        """Return DAC gain in dB, flat across the band."""
+        if isinstance(carrier_frequency, np.ndarray):
+            return np.full_like(carrier_frequency, self.gain_db)
+        return self.gain_db
+
+    def noise(self, carrier_frequency, spectral_frequency):
+        """
+        Return the phase-noise PSD in W/Hz.
+
+        Evaluated as a power law in linear units rather than as a level plus
+        ``slope * log10(offset)``: the two agree wherever both are defined, but
+        the log form returns nan for a white skirt at zero offset (0 * -inf)
+        where the power law returns the level, and a white skirt at the carrier
+        is a perfectly sensible thing to ask about. A falling skirt at zero
+        offset is infinite either way, which is what a 1/f law says.
+
+        Carrier-frequency independent: a generic part is not claiming a measured
+        carrier dependence it does not have.
+        """
+        if self.noiseless:
+            return flat_in_spectral(0.0, spectral_frequency)
+        offset = np.asarray(spectral_frequency, dtype=float)
+        level_w_per_hz = 10**((self.phase_noise_dbc_per_hz
+                               + self.carrier_power_dbm) / 10) * 1e-3
+        ratio = (offset / self.phase_noise_offset_hz) ** (
+            self.phase_noise_slope_db_per_decade / 10)
+        return level_w_per_hz * ratio
+
+
+@register("converter.generic_adc", category="Converters", label="Generic ADC",
+          params=(
+              ParamSpec("noise_density_dbm_per_hz", default=-140.0,
+                        label="Input Noise", unit="dBm/Hz",
+                        minimum=-220.0, maximum=0.0, step=1.0,
+                        help="White noise floor at the digitizer input. "
+                             "-174 dBm/Hz is a 300 K thermal floor; the AD9082 "
+                             "datasheet's flat figure is -140."),
+              NOISELESS_PARAM,
+              ParamSpec("gain_db", default=0.0, label="Gain", unit="dB",
+                        minimum=-50.0, maximum=50.0, step=0.5),
+          ))
+class GenericADC(ADCComponent):
+    """
+    Configurable ADC: one white noise density, flat in carrier and in offset.
+
+    For evaluating a chain against an arbitrary digitizer. A single number is
+    the whole model, because that is the form a noise floor is usually available
+    in - a datasheet's noise spectral density, or an SNR and a bandwidth worked
+    out by hand - and inventing a frequency dependence for it would be putting
+    in structure the number does not carry.
+
+    The density is where the noise stands, not where it was referred from:
+    ``ADCComponent`` refers converter noise to the output plane, so the ADC's
+    own ``gain_db`` is not applied to it. At the default 0 dB there is no
+    difference, and a chain that wants an input-referred floor with gain on the
+    converter should state the floor at the plane it means.
+
+    Compare with ``AD9082_ADC``, which derives a carrier-dependent floor from a
+    datasheet SNR curve. Its own datasheet also quotes a flat -140 dBm/Hz, which
+    is this model's default - so the two side by side are the discrepancy noted
+    in the README, in a form a budget can be run against.
+    """
+
+    def __init__(self, noise_density_dbm_per_hz=-140.0, noiseless=False,
+                 gain_db=0.0, name=None):
+        super().__init__(name=name, params={
+            "noise_density_dbm_per_hz": noise_density_dbm_per_hz,
+            "noiseless": noiseless,
+            "gain_db": gain_db,
+        })
+        self.noise_density_dbm_per_hz = noise_density_dbm_per_hz
+        self.noiseless = noiseless
+        self.gain_db = gain_db
+
+    def gain(self, carrier_frequency):
+        """Return ADC gain in dB, flat across the band."""
+        if isinstance(carrier_frequency, np.ndarray):
+            return np.full_like(carrier_frequency, self.gain_db)
+        return self.gain_db
+
+    def noise(self, carrier_frequency, spectral_frequency):
+        """Return the input noise PSD in W/Hz, white across both axes."""
+        if self.noiseless:
+            return flat_in_spectral(0.0, spectral_frequency)
+        return flat_in_spectral(
+            10**(self.noise_density_dbm_per_hz / 10) * 1e-3, spectral_frequency)
 
 
 @register("amplifier.cryoelec_lna", category="Amplifiers",

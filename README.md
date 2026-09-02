@@ -51,7 +51,14 @@ A Python tool for modeling and analyzing RF analog signal chains, with support f
 #### Other Components
 - `Attenuator`: Temperature-aware attenuator (contributes thermal noise)
 - `FilterHP_VHF1320p`, `FilterHP_VHF1760p`, `FilterHP_VHF1910p`: High-pass filters
-- `AD9082`: DAC/ADC with phase noise characteristics
+
+#### Converters
+- `AD9082_DAC`, `AD9082_ADC`: the modelled part — a fitted phase-noise skirt at
+  one end, a datasheet SNR curve at the other
+- `GenericDAC`, `GenericADC`: an arbitrary digitizer, stated rather than fitted —
+  a carrier at a chosen power with a power-law noise skirt, and a white input
+  noise density. Either can be set `noiseless` to take the digitizer out of the
+  budget entirely and judge the chain on its components alone.
 
 ## Installation
 
@@ -285,9 +292,11 @@ The carrier sets the **level**; the spectral frequency sets the **shape**:
 | Source | Level from | Shape in spectral |
 |---|---|---|
 | Amplifiers | carrier frequency (noise temperature vs RF) | white |
-| DAC | carrier power (+ any carrier-frequency dependence) | 1/f skirt |
+| `AD9082_DAC` | carrier power (+ any carrier-frequency dependence) | 1/f skirt |
 | Attenuator | temperature, `k_B·T` | white |
-| ADC | carrier frequency (datasheet SNR vs input frequency) | white |
+| `AD9082_ADC` | carrier frequency (datasheet SNR vs input frequency) | white |
+| `GenericDAC` | carrier power | power-law skirt, slope in dB/decade |
+| `GenericADC` | its one stated density | white |
 
 A source that is white near the carrier computes its level from the carrier and
 returns it flat across the spectral axis - `component.flat_in_spectral(level,
@@ -306,7 +315,43 @@ conditions it was measured under.
 > -140 dBm/Hz noise spectral density, which this model used previously. The
 > SNR-derived figure is 3.4x (at 3 GHz) to 9.5x (at 100 MHz) *lower*. The two
 > specs are not reconcilable by unit conversion, so if your ADC noise matters,
-> confirm which applies to your configuration.
+> confirm which applies to your configuration. `GenericADC` defaults to the flat
+> -140 dBm/Hz figure, so the two can be run against each other rather than only
+> read about here.
+
+#### An arbitrary digitizer
+
+`GenericDAC` and `GenericADC` exist so a chain can be evaluated against whatever
+converters it will actually sit between, without a datasheet having been fitted
+into the library first. Both state their noise instead of interpolating it:
+
+```python
+from hardware_models import GenericADC, GenericDAC
+
+chain.set_digitizer(
+    GenericDAC(carrier_power_dbm=-10.0,          # the tone it puts out
+               phase_noise_dbc_per_hz=-110.0,    # the skirt, as a datasheet quotes it
+               phase_noise_offset_hz=1.0e4,      #   ...at this offset
+               phase_noise_slope_db_per_decade=-10.0),
+    GenericADC(noise_density_dbm_per_hz=-150.0))  # a white input floor
+```
+
+The DAC's skirt is a straight line on a log-log plot — a level in dBc/Hz, the
+offset it is quoted at, and a slope in dB/decade, where -10 is 1/f in power,
+-20 is 1/f², and 0 is a white phase-noise floor. There is deliberately no
+separate broadband floor term: the AD9082 model here fits one and it comes out
+at zero, so a pure power law is what the library's real DAC already is. The
+defaults (-85 dBc/Hz at 1 Hz, -10 dB/decade, and -140 dBm/Hz on the ADC)
+reproduce the AD9082's simple model, so an unedited pair is a familiar part and
+a swap between the two isolates what the SNR curve is worth.
+
+Either converter takes `noiseless=True`. That is not a very small number — it is
+zero, and a stage with no noise is skipped by the budget entirely, so the chain
+is left to be judged on its components. "How good is this chain" and "how good
+is this chain with this digitizer" are different questions, and turning the
+level knobs to their minimum answers neither: -220 dBm/Hz is small, not absent,
+and still appears as a line to be discounted by eye. The gain knob is untouched
+by the flag — noise-free is not transparent.
 
 Because every source shares the signature, sweeping either axis returns a result
 shaped like that axis, and the chain never has to know which kind of source it

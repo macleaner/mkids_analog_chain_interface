@@ -109,6 +109,8 @@ converters. From there:
 | reorder a stage | drag it by the `⋮⋮` handle, or use the `▲▼` that appear on the stage you are pointing at |
 | set the endpoints | the **Converters** selects at the top of the signal chain |
 | set the DAC carrier power | click the **DAC stage** (stage 0) — `Carrier Power` and `Gain` are in its card, like any other stage's parameters |
+| model a digitizer that is not in the library | pick **Generic DAC** / **Generic ADC**, then state the carrier power, the phase-noise skirt and the ADC's input noise density in their cards |
+| judge the chain without its converters | tick `Noiseless` on either card — that end drops out of the budget rather than contributing a small line to discount |
 | remove an endpoint | its `×`, or its select back to *— none —* |
 | name the chain, or annotate it | click the chain name in the top bar |
 | see what any of that saves as | the **Chain file** tab, right-hand column |
@@ -142,6 +144,31 @@ reports a `role` of `dac`, `adc` or `component` per entry, derived from
 `DACComponent`/`ADCComponent`, so a converter registered later is offered by
 the Converters control rather than as an appendable component.
 
+**Generic DAC** and **Generic ADC** are for a digitizer the library does not
+model: a carrier at a chosen power with a power-law phase-noise skirt, and a
+white input noise density. Their `Noiseless` boxes take that end out of the
+budget altogether — zero, not a small number, so a stage with no noise is
+skipped and the chain is judged on its components. That is a different question
+from how the chain does with a given digitizer, and turning the levels down to
+their minimum would not ask it.
+
+A parameter's widget comes from its declared `kind`, so `Noiseless` is a
+checkbox and not a text field. That matters more than it looks: typing into a
+text field would submit the string `"false"`, and Python's `bool("false")` is
+True, so the flag would read as set while the box said otherwise. The registry
+now refuses that string outright, but the widget is where it stops being
+possible to type.
+
+A card's layout comes from the same place. A `ParamSpec` may declare a `group`,
+which is the heading of a sub-box the parameter is collected into — the Generic
+DAC's card puts its four skirt knobs under **Noise parameters**, leaving
+`Carrier Power` and `Gain` outside it, because what the DAC puts out is not part
+of its skirt. Six knobs in a flat list say nothing about which four describe one
+thing. The view opens a box whenever the group changes as it renders down the
+declared order, so it neither reorders anything nor knows any parameter by name;
+`register` requires a group to be one unbroken run, since a split one would
+render as two boxes under a single heading.
+
 An empty chain has no stages, and therefore no plane a budget can be referred
 to — the table says so instead of erroring, and the sweeps return zero gain and
 zero noise. Nothing is autosaved: **new chain** discards what is on screen, so
@@ -173,9 +200,10 @@ view:
   two cases.
 * **the unit for its noise.** A noise temperature only means anything for a
   source that is white near the carrier, so the model is evaluated across the
-  spectral axis: an amplifier or a warm attenuator gets one temperature in K,
-  the AD9082's phase-noise skirt gets a density at the offset the budget is set
-  to, and a filter — lossy, but not a source — reads `none`.
+  spectral axis: an amplifier or a warm attenuator gets one temperature in K, a
+  DAC's phase-noise skirt gets a density at the offset the budget is set to, and
+  a filter — lossy, but not a source — reads `none`. So does a `noiseless`
+  converter, which is the same statement about a stage that contributes nothing.
 
 The carrier and the spectral offset are the budget's, so a spec is read at the
 operating point being worked at. The figures are for the registry defaults,

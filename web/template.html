@@ -52,6 +52,10 @@ button.on{border-color:var(--accent);color:var(--accent)}
 input,select,textarea{font:inherit;color:var(--ink);background:var(--bg);
   border:1px solid var(--line);border-radius:4px;padding:3px 6px;width:100%}
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent2)}
+/* A flag, not a field: the 100% above would stretch a checkbox across the
+   whole value column, which reads as a broken text input. */
+input[type=checkbox]{width:auto;height:14px;margin:0;padding:0;
+  justify-self:start;accent-color:var(--accent)}
 textarea{resize:vertical;line-height:1.45}
 
 #boot{position:fixed;inset:0;z-index:99;display:flex;align-items:center;
@@ -233,6 +237,17 @@ body.ry,body.ry *{cursor:row-resize!important;user-select:none!important}
 .prow{display:grid;grid-template-columns:1fr 92px;gap:7px;align-items:center;
   margin-top:6px;font-size:var(--fs1)}
 .prow .u{font-family:var(--mono);font-size:var(--fs3);color:var(--ink3)}
+/* A sub-box for the parameters a component declares as one group. Inset and
+   ruled rather than boxed on all four sides: it sits among the card's own rows,
+   so it has to read as part of that list and not as a second card. The first
+   row's margin is dropped because the heading already provides the gap. */
+.pgroup{margin-top:8px;padding:5px 8px 7px;border:1px solid var(--line);
+  border-radius:5px;background:var(--panel2)}
+.pgroup .gh{font-size:var(--fs3);letter-spacing:.04em;text-transform:uppercase;
+  color:var(--ink3)}
+/* The row after the heading, not `.prow:first-of-type` - the heading is a div
+   too, so first-of-type would never match a row. */
+.pgroup .gh+.prow{margin-top:3px}
 .doc{font-size:var(--fs2);color:var(--ink3);margin:5px 0 0;line-height:1.45}
 .doc code{font-family:var(--mono);font-size:var(--fs3);color:var(--ink2)}
 
@@ -1141,20 +1156,53 @@ function renderStages(){
       body.appendChild(row);
     }
     if (spec && spec.params.length){
+      /* Parameters go where the component says they go. A `group` on a spec is
+         the heading of a sub-box; the registry guarantees a group is one
+         unbroken run, so opening a box whenever the group changes renders the
+         declared order without reordering anything or knowing any parameter
+         name. `openGroup` is where rows land - the card body outside a group,
+         the box inside one. */
+      let openGroup = null, into = body;
       for (const ps of spec.params){
+        const group = ps.group || null;
+        if (group !== openGroup){
+          openGroup = group;
+          into = body;
+          if (group){
+            const box = document.createElement('div');
+            box.className = 'pgroup';
+            const heading = document.createElement('div');
+            heading.className = 'gh';
+            heading.textContent = group;
+            box.appendChild(heading);
+            body.appendChild(box);
+            into = box;
+          }
+        }
         const row = document.createElement('div');
         row.className = 'prow';
         const lab = document.createElement('label');
         lab.innerHTML = `${ps.label} <span class="u">${ps.unit}</span>`;
         lab.title = ps.help || '';
         const input = document.createElement('input');
-        input.value = stage.params[ps.name] ?? ps.default ?? '';
-        if (ps.minimum !== null) input.min = ps.minimum;
-        if (ps.maximum !== null) input.max = ps.maximum;
+        // A bool is a checkbox and not a text field. Typing into one would send
+        // the string "false", and Python's bool("false") is True - so the flag
+        // would read as set while the box said otherwise. The registry refuses
+        // that string now, but the widget is where it stops being possible.
+        const flag = ps.kind === 'bool';
+        if (flag){
+          input.type = 'checkbox';
+          input.checked = !!(stage.params[ps.name] ?? ps.default);
+        } else {
+          input.value = stage.params[ps.name] ?? ps.default ?? '';
+          if (ps.minimum !== null) input.min = ps.minimum;
+          if (ps.maximum !== null) input.max = ps.maximum;
+        }
         // Committed on change, not on every keystroke: each edit rebuilds the
         // component in Python, which re-runs its interpolator setup.
         input.onchange = guard(() => {
-          const value = ps.kind === 'float' ? num(input.value)
+          const value = flag ? input.checked
+                      : ps.kind === 'float' ? num(input.value)
                       : ps.kind === 'int' ? parseInt(input.value, 10)
                       : input.value;
           CHAIN = stage.component_index === null
@@ -1163,7 +1211,7 @@ function renderStages(){
           renderAll();
         });
         row.append(lab, input);
-        body.appendChild(row);
+        into.appendChild(row);
       }
     } else {
       const none = document.createElement('p');

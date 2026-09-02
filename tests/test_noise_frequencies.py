@@ -115,6 +115,136 @@ def test_dac_carrier_level_hook_is_a_documented_no_op():
     assert float(dac.noise(1e8, 1e3)) == float(dac.noise(2.5e9, 1e3))
 
 
+# ----------------------------------------------------------------------
+# The generic converters - an arbitrary digitizer, stated rather than fitted
+# ----------------------------------------------------------------------
+
+def test_generic_dac_defaults_reproduce_the_ad9082_skirt():
+    """
+    The defaults are the AD9082's simple phase-noise model - -85 dBc/Hz at 1 Hz
+    falling 10 dB/decade - so an unedited Generic DAC is a familiar part and a
+    swap between the two isolates what the ADC side contributes.
+    """
+    generic = _make("converter.generic_dac")
+    fitted = _make("converter.ad9082_dac")
+    for f in SPECTRAL_FREQS:
+        assert float(generic.noise(1.5e9, f)) == pytest.approx(
+            float(fitted.noise(1.5e9, f)), rel=1e-6)
+
+
+@pytest.mark.parametrize("slope,decade_ratio", [
+    (-10.0, 0.1),      # 1/f in power
+    (-20.0, 0.01),     # 1/f^2
+    (0.0, 1.0),        # a white phase-noise floor
+])
+def test_generic_dac_slope_is_per_decade(slope, decade_ratio):
+    """The slope means dB per decade of offset, at every decade."""
+    dac = registry.create("converter.generic_dac",
+                          {"phase_noise_slope_db_per_decade": slope})
+    values = [float(dac.noise(1.5e9, f)) for f in (1e1, 1e2, 1e3, 1e4)]
+    for here, next_decade in zip(values, values[1:]):
+        assert next_decade / here == pytest.approx(decade_ratio, rel=1e-9)
+
+
+def test_generic_dac_level_is_the_quoted_figure_at_the_quoted_offset():
+    """
+    dBc/Hz at an offset plus the carrier power in dBm is a density in dBm/Hz,
+    which is the whole arithmetic of this model.
+    """
+    dac = registry.create("converter.generic_dac", {
+        "carrier_power_dbm": -12.0,
+        "phase_noise_dbc_per_hz": -110.0,
+        "phase_noise_offset_hz": 1e4,
+    })
+    expected = 10**((-110.0 - 12.0) / 10) * 1e-3
+    assert float(dac.noise(1.5e9, 1e4)) == pytest.approx(expected, rel=1e-12)
+
+
+def test_generic_dac_scales_with_the_carrier_it_puts_out():
+    """A skirt is relative to the carrier, so raising it raises the noise 1:1."""
+    quiet = registry.create("converter.generic_dac", {"carrier_power_dbm": -30.0})
+    loud = registry.create("converter.generic_dac", {"carrier_power_dbm": -20.0})
+    for f in SPECTRAL_FREQS:
+        assert float(loud.noise(1.5e9, f)) / float(quiet.noise(1.5e9, f)) == \
+            pytest.approx(10.0, rel=1e-9)
+
+
+def test_generic_dac_is_carrier_frequency_independent():
+    """A stated part claims no measured dependence on the RF frequency."""
+    dac = _make("converter.generic_dac")
+    values = [float(dac.noise(f, 1e3)) for f in CARRIER_FREQS]
+    assert np.allclose(values, values[0], rtol=0.0, atol=0.0)
+
+
+def test_generic_dac_refuses_a_zero_reference_offset():
+    """
+    0 Hz is the carrier, not an offset from it, and dividing by it would return
+    inf or nan for every offset instead of failing.
+    """
+    from hardware_models import GenericDAC
+
+    with pytest.raises(ValueError, match="phase_noise_offset_hz"):
+        GenericDAC(phase_noise_offset_hz=0.0)
+    # And through the registry, which range-checks before constructing.
+    with pytest.raises(ValueError, match="below the minimum"):
+        registry.create("converter.generic_dac", {"phase_noise_offset_hz": 0.0})
+
+
+def test_generic_adc_is_the_density_it_was_given():
+    """dBm/Hz in, W/Hz out, flat in both axes."""
+    adc = registry.create("converter.generic_adc",
+                          {"noise_density_dbm_per_hz": -150.0})
+    expected = 10**(-150.0 / 10) * 1e-3
+    grid = [float(adc.noise(c, s))
+            for c in CARRIER_FREQS for s in SPECTRAL_FREQS]
+    assert np.allclose(grid, expected, rtol=1e-12, atol=0.0)
+
+
+def test_generic_adc_default_is_the_ad9082_flat_datasheet_figure():
+    """
+    -140 dBm/Hz is the flat spec the AD9082 datasheet also quotes; the SNR-derived
+    model sits below it. Having both means the discrepancy can be run, not just
+    read about in the README.
+    """
+    generic = _make("converter.generic_adc")
+    fitted = _make("converter.ad9082_adc")
+    assert float(generic.noise(1.5e9, 1e3)) == pytest.approx(
+        10**(-140.0 / 10) * 1e-3, rel=1e-12)
+    assert float(generic.noise(1.5e9, 1e3)) > float(fitted.noise(1.5e9, 1e3))
+
+
+@pytest.mark.parametrize("type_id", ["converter.generic_dac",
+                                     "converter.generic_adc"])
+def test_noiseless_converters_contribute_exactly_zero(type_id):
+    """
+    Not "very small": zero, on both axes and swept or scalar. A budget skips a
+    stage with no noise, so an ideal converter leaves the chain to be judged on
+    its components rather than leaving a line to be discounted by eye.
+    """
+    entry = registry.resolve(type_id)
+    params = {s.name: s.default for s in entry.params}
+    params["noiseless"] = True
+    ideal = registry.create(type_id, params)
+
+    for c in CARRIER_FREQS:
+        for s in SPECTRAL_FREQS:
+            assert float(ideal.noise(c, s)) == 0.0
+    swept = ideal.noise(1.5e9, np.asarray(SPECTRAL_FREQS, dtype=float))
+    assert np.shape(swept) == (len(SPECTRAL_FREQS),)
+    assert np.all(np.asarray(swept) == 0.0)
+
+
+@pytest.mark.parametrize("type_id", ["converter.generic_dac",
+                                     "converter.generic_adc"])
+def test_noiseless_still_applies_its_gain(type_id):
+    """Noise-free is not transparent: the gain knob is untouched by the flag."""
+    entry = registry.resolve(type_id)
+    params = {s.name: s.default for s in entry.params}
+    params.update(noiseless=True, gain_db=-3.5)
+    ideal = registry.create(type_id, params)
+    assert float(ideal.gain(1.5e9)) == pytest.approx(-3.5)
+
+
 def test_attenuator_is_flat_in_both_axes():
     atten = registry.create("attenuator",
                             {"attenuation": -10, "temperature": 300})
