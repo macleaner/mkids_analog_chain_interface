@@ -148,6 +148,12 @@ cython_debug/
 chain_diagram.pdf
 examples/*.pdf
 
+# ...except the datasheets a component model was built from, which are a record
+# and not an output. Without this the rule above silently swallows them: git add
+# skips the file, nothing is reported, and the source of a model's numbers is
+# missing from the commit that adds it. See component_references/README.md.
+!component_references/*.pdf
+
 # Project-specific: Large data files (uncomment if these should not be tracked)
 # *.pkl
 # transferfunctions/*.pkl
