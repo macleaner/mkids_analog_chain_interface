@@ -76,6 +76,7 @@ COMPONENT_SPECS = {
     "SMA_RG58C_cables": {"length_m": 0.5},
     "SMA_RG174A_cables": {"length_m": 0.5},
     "SMA_RG316_cables": {"length_m": 0.5},
+    "ZN4PD_4R722plus": {},
     "FilterHP_VHF1320p": {},
     "FilterHP_VHF1760p": {},
     "FilterHP_VHF1910p": {},

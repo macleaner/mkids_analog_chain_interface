@@ -325,4 +325,5 @@ def by_category() -> Dict[str, List[RegistryEntry]]:
 
 
 # Presentation order for the component library tree.
-CATEGORY_ORDER = ("Amplifiers", "Cables", "Attenuators", "Filters", "Converters")
+CATEGORY_ORDER = ("Amplifiers", "Cables", "Attenuators", "Filters", "Splitters",
+                  "Converters")

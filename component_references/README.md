@@ -25,7 +25,7 @@ path and date rather than copied here.
 | `RG316-SMAcable-HUBERSUHNERRG316UDataSheet.pdf` | HUBER+SUHNER RG316/U coax | `SMA_RG316_cables` | DOC-0000177782, 2020-10-14 | 2026-09-03 |
 | `VHF-5050+.pdf` | Mini-Circuits VHF-5050+ high pass | `FilterHP_VHF5050p` | REV. B | 2026-08-28 |
 | `VLF-6700+.pdf` | Mini-Circuits VLF-6700+ low pass | `FilterLP_VLF6700p` | (unmarked) | 2026-08-28 |
-| `ZN4PD-4R722+_dashboard.pdf` | Mini-Circuits ZN4PD-4R722+ 4-way splitter/combiner | *none yet* | REV. OR, ECO-011123 | 2026-09-03 |
+| `ZN4PD-4R722+_dashboard.pdf` | Mini-Circuits ZN4PD-4R722+ 4-way splitter/combiner | `ZN4PD_4R722plus` | REV. OR, ECO-011123 | 2026-09-03 |
 | `ZX60-83LN-S+.pdf` | Mini-Circuits ZX60-83LN-S+ LNA | `ZX60_83LN_Splus` | REV. C, ECO-015740 | 2026-09-02 |
 
 The Mini-Circuits parts come from `https://www.minicircuits.com/pdfs/<part>.pdf`,
@@ -48,15 +48,17 @@ e9e5a9a8f9e5d6e240a02ee54feaf3b2abc02d3ceacbeec0bacc613b170b5e90  VLF-6700+.pdf
 0d09ff885bd31620bec944d399915ed29d0e5f9a4dcd791c2d1541fff5ef5273  ZX60-83LN-S+.pdf
 ```
 
-## Stored but not modelled
+## Modelled narrower than the datasheet
 
-**`ZN4PD-4R722+`**, a 4-way 0° power splitter/combiner, 400-7200 MHz, 0.9 dB
-typical insertion loss, 30 W. There is no splitter in the library and no obvious
-place to put one: `SignalChain` is a linear cascade, so a four-port part has no
-representation beyond the -6 dB split plus its insertion loss along one arm,
-which throws away the amplitude and phase unbalance that are the reasons to
-choose this part over another. Worth a deliberate decision rather than a
-component that quietly models a splitter as an attenuator.
+**`ZN4PD-4R722+`** is in the library as the loss along one output arm, which is
+all a linear cascade can hold - `SignalChain` is a chain, so there is nowhere to
+put the other three ports. The loss is the datasheet's Total Loss, insertion
+loss with the 6 dB of splitting already included, averaged across the four
+measured arms. Deliberately absent, and on the datasheet if you need them: the
+amplitude and phase unbalance between arms, the isolation between outputs, the
+fact that a combiner sums four inputs rather than dividing one, the 30 W rating
+and the DC-pass path. A chain that turns on any of those is not one this model
+belongs in.
 
 ## What is still missing
 

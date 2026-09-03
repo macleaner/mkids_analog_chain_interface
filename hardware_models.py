@@ -1211,6 +1211,83 @@ class SMA_RG174A_cables(_RoomTemperatureCable):
     db_per_m = -np.asarray([0.0, 27.56, 62.34, 104.99]) / 100.0
 
 
+#: ZN4PD-4R722+ total loss in dB from the typical performance table, one column
+#: per output arm - S-1, S-2, S-3, S-4 - against _ZN4PD_FREQ_HZ. Total Loss is
+#: the datasheet's own quantity: "Insertion Loss + 6dB splitter loss", so each
+#: figure is the whole loss from the input to that one output and needs no split
+#: term added to it. Kept per arm rather than pre-averaged so the published
+#: numbers stay checkable against the PDF.
+_ZN4PD_FREQ_HZ = 1e6 * np.asarray(
+    [400, 500, 600, 700, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 7200])
+_ZN4PD_TOTAL_LOSS_DB = np.asarray([
+    [6.64, 6.59, 6.84, 6.63],
+    [6.71, 6.67, 6.82, 6.70],
+    [6.43, 6.36, 6.46, 6.41],
+    [6.41, 6.34, 6.34, 6.40],
+    [6.52, 6.47, 6.55, 6.51],
+    [6.67, 6.61, 6.65, 6.65],
+    [6.92, 6.89, 6.86, 6.90],
+    [7.08, 7.06, 7.11, 7.03],
+    [7.22, 7.22, 7.32, 7.17],
+    [7.48, 7.53, 7.48, 7.42],
+    [7.53, 7.59, 7.52, 7.48],
+    [7.67, 7.68, 7.34, 7.61],
+])
+
+
+@register("splitter.zn4pd_4r722_plus", category="Splitters",
+          label="Mini-Circuits ZN4PD-4R722+ (one arm)")
+class ZN4PD_4R722plus(_DatasheetSpan, PassiveComponent):
+    """
+    Mini-Circuits ZN4PD-4R722+ 4-way 0 degree splitter/combiner, 400-7200 MHz.
+
+    Modelled as the loss along one output arm and nothing else, which is the
+    only thing a linear cascade can represent: SignalChain is a chain, so there
+    is nowhere to put the other three ports. Read it as "the signal goes into
+    this splitter and I follow one output", and read the loss as the datasheet's
+    Total Loss - insertion loss with the 6 dB of splitting already in it, 6.4 dB
+    at 700 MHz rising to 7.6 dB at 7.2 GHz. Nothing needs adding for the split.
+
+    The four arms are averaged at each frequency. They are the four ports of one
+    measured unit and differ by the amplitude unbalance, at most 0.36 dB and
+    typically under 0.1, so no arm is the right one to privilege - a different
+    unit would permute them. The mean is therefore an estimate of "an arm" and
+    not a measurement of any particular one.
+
+    What this cannot tell you, and what the part is usually chosen for: the
+    amplitude and phase unbalance between arms, the 19-49 dB isolation between
+    outputs, and the fact that a combiner sums four inputs rather than dividing
+    one. A chain that cares about any of those is not a chain this model belongs
+    in. Nor is the 30 W rating or the DC-pass path represented.
+
+    Contributes no noise, which follows the cables and filters here rather than
+    the Attenuator - it is the library's convention that a lossy passive is
+    modelled as lossy and not as a thermal source, and diverging for this one
+    part would make a splitter and an equivalent cable behave differently. Worth
+    knowing that the convention costs more here than elsewhere: 6.4 dB is a lot
+    of loss, and a warm 6.4 dB pad ahead of an LNA is worth about 300 K referred
+    to its input. A chain where that matters should carry an explicit Attenuator
+    at the physical temperature alongside this.
+
+    Source: component_references/ZN4PD-4R722+_dashboard.pdf, REV. OR,
+    ECO-011123.
+    """
+
+    def __init__(self, name=None):
+        super().__init__(name=name, params={})
+        # Negated because gain() reports loss as negative gain, and averaged in
+        # dB, which is what "typical loss along an arm" means for figures that
+        # spread by a tenth of a dB; converting to power to average would move
+        # the result by far less than the unbalance it is summarising.
+        mean_loss_db = -_ZN4PD_TOTAL_LOSS_DB.mean(axis=1)
+        (self.loss_f, self._ceiling_db,
+         self._span_hz) = _datasheet_curve(_ZN4PD_FREQ_HZ, mean_loss_db)
+
+    def gain(self, carrier_frequency):
+        """Loss in dB from the input to one output, the 6 dB split included."""
+        return np.minimum(self.loss_f(carrier_frequency), self._ceiling_db)
+
+
 class _FormulaCable(_DatasheetSpan, PassiveComponent):
     """
     Shared implementation for cables whose datasheet gives a loss formula.
