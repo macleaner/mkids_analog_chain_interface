@@ -75,6 +75,7 @@ COMPONENT_SPECS = {
     "SMA_FM_F141_cables": {"length_m": 0.5},
     "SMA_RG58C_cables": {"length_m": 0.5},
     "SMA_RG174A_cables": {"length_m": 0.5},
+    "SMA_RG316_cables": {"length_m": 0.5},
     "FilterHP_VHF1320p": {},
     "FilterHP_VHF1760p": {},
     "FilterHP_VHF1910p": {},

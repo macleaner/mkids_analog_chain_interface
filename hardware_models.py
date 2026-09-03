@@ -698,8 +698,11 @@ class CMT_CITCRYO1_12D(_InterpolatedLNA):
     part. Flat is what one number can honestly say; it is not a measurement of
     flatness, and a real HEMT's noise rises at both band edges.
 
-    Source: not stored - neither the s2p nor the datasheet is in this repo.
-    See component_references/README.md.
+    Source: component_references/CITCRYO1-12D_Technical_DataSheet_04.13.26.pdf,
+    Cosmic Microwave Technology, Rev. 04/13/2026. Its 12 K noise and gain data
+    is a plot rather than a table - the specification table only bounds noise
+    at "< 5 K", which is the figure held flat here - and the SN216D s2p behind
+    the gain curve is still not in the repo.
     """
 
     gain_response = (
@@ -728,7 +731,7 @@ class LNF_LNC1_5_6B(_InterpolatedLNA):
     middle of the band, but 6 K at 1.5 GHz, so the bottom decile of the band
     costs more than three times the quoted figure.
 
-    Source: not stored. See component_references/README.md.
+    Source: component_references/lnf-lnc1-5_6b.pdf, dated 2023-02-23.
     """
 
     gain_response = (
@@ -766,7 +769,7 @@ class LNF_LNC0_3_14B(_InterpolatedLNA):
     curve is modelled, since there is no bias parameter to select the other end
     with, so this is the part at full power and not at its quietest setting.
 
-    Source: not stored. See component_references/README.md.
+    Source: component_references/lnf-lnc0-3_14b.pdf, dated 2023-02-24.
     """
 
     gain_response = (
@@ -1206,3 +1209,88 @@ class SMA_RG174A_cables(_RoomTemperatureCable):
     # Datasheet lists attenuation as positive dB/100 m; negated here because
     # gain() must return loss as a negative gain.
     db_per_m = -np.asarray([0.0, 27.56, 62.34, 104.99]) / 100.0
+
+
+class _FormulaCable(_DatasheetSpan, PassiveComponent):
+    """
+    Shared implementation for cables whose datasheet gives a loss formula.
+
+    Subclasses set ``atten_a``, ``atten_b`` and ``datasheet_fmax_ghz``, for
+
+        attenuation = atten_a * sqrt(f_GHz) + atten_b * f_GHz    [dB/m]
+
+    which is not a curve fit but the two loss mechanisms written down. The
+    sqrt term is resistive loss in the conductors, going as sqrt(f) because
+    skin depth does; the linear term is dielectric loss, going as f because the
+    loss tangent is roughly constant over these bands. Cable vendors publish the
+    pair of coefficients precisely because the form holds.
+
+    This is the reason to evaluate a formula rather than tabulate its output.
+    Extending a table's endpoint slope past the last row models resistive loss
+    as if it grew like f, which overstates it and increasingly so with distance
+    from the band; the formula keeps each term's exponent wherever it is
+    evaluated, so the only thing out of warranty above the datasheet's range is
+    the calibration of two coefficients. ``defined_span_hz`` still reports the
+    range the vendor validates, so a sweep past it is flagged per stage exactly
+    as a tabulated model's is - the estimate is better, not exempt.
+
+    No clamp, unlike the tabulated cables. Their extrapolation needs one because
+    a linear extension toward DC runs a loss curve up through zero and out the
+    other side into gain; here loss is monotonic in f and zero at DC by
+    construction, so for non-negative coefficients no frequency can produce
+    gain and there is nothing to bound.
+    """
+
+    #: dB/m at 1 GHz from conductor loss, the sqrt(f) term.
+    atten_a = None
+    #: dB/m per GHz from dielectric loss, the linear term.
+    atten_b = None
+    #: Highest frequency the vendor quotes the coefficients for, in GHz.
+    datasheet_fmax_ghz = None
+
+    def __init__(self, length_m, name=None):
+        super().__init__(name=name, params={"length_m": length_m})
+        self.length = length_m
+        self._span_hz = (0.0, float(self.datasheet_fmax_ghz) * 1e9)
+
+    def atten_db_per_m(self, carrier_frequency):
+        """Attenuation in dB/m, positive, at ``carrier_frequency`` in Hz."""
+        f_ghz = np.asarray(carrier_frequency, dtype=float) / 1e9
+        return self.atten_a * np.sqrt(f_ghz) + self.atten_b * f_ghz
+
+    def gain(self, carrier_frequency):
+        """Total insertion loss in dB over ``self.length`` metres."""
+        return -self.atten_db_per_m(carrier_frequency) * self.length
+
+
+@register("cable.rg316", category="Cables", label="RG316/U (room temp)",
+          params=(LENGTH_PARAM,))
+class SMA_RG316_cables(_FormulaCable):
+    """
+    HUBER+SUHNER RG316/U, 50 ohm, silver-plated braid, 2.5 mm FEP jacket.
+
+    The coefficients are the datasheet's own, printed above its attenuation
+    table under the heading it gives them for - ``a*f^0.5 + b*f`` - so the loss
+    here is not a fit of the table but the thing the table was generated from.
+    Evaluating it reproduces every published row: 0.31 dB/m at 150 MHz, 0.89 at
+    1.05 GHz, 1.63 at 3 GHz.
+
+    Validated to 3 GHz, which is the operating frequency on the front page and
+    the ``fmax`` beside the coefficients, so a sweep past 3 GHz is reported as
+    an estimate like any other. It is a well-founded estimate - both terms keep
+    their physical meaning at higher frequency - but the coefficients were only
+    ever checked below 3 GHz, and a braided outer conductor starts to leak as
+    the weave approaches a wavelength, which this form does not describe at all.
+    Screening is only specified to 1 GHz.
+
+    Not modelled: the 135 W CW rating at 1 GHz falling as 1/sqrt(f), the -65 to
+    +200 C range, 1.5 kVrms operating voltage, or the 4.86 ns/m delay. This is
+    loss against frequency and nothing else.
+
+    Source: component_references/RG316-SMAcable-HUBERSUHNERRG316UDataSheet.pdf,
+    DOC-0000177782, published 2020-10-14.
+    """
+
+    atten_a = 0.7727
+    atten_b = 0.0972
+    datasheet_fmax_ghz = 3.0

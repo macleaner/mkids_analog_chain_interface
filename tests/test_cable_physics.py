@@ -23,6 +23,7 @@ CABLES = [
     ("cable.fm_f141", 1.5e9),
     ("cable.rg58c", 1.0e9),
     ("cable.rg174a", 4.0e8),
+    ("cable.rg316", 1.5e9),
     ("cable.sma_cuni_cryo", 1.0e9),
     ("cable.sma_cuni086_cryo", 1.0e9),
     ("cable.sma_ss086_cryo", 1.0e9),

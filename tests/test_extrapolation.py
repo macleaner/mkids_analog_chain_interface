@@ -27,7 +27,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import registry  # noqa: E402
 
-# Every model that holds a tabulated curve, with the arguments to build it.
+# Every model that answers past its datasheet, with the arguments to build it -
+# a tabulated curve extended, or, for cable.rg316, a vendor formula evaluated.
+# The contract below is about what a model may say outside its band, not about
+# how it stores what it knows inside it.
 TABULATED = {
     "amplifier.asu_3ghz_lna": {},
     "amplifier.zx60_3018g_plus": {},
@@ -42,6 +45,7 @@ TABULATED = {
     "cable.fm_f141": {"length_m": 1.0},
     "cable.rg58c": {"length_m": 1.0},
     "cable.rg174a": {"length_m": 1.0},
+    "cable.rg316": {"length_m": 1.0},
     "cable.sma_cuni_cryo": {"length_m": 1.0, "temperature": 4.0},
     "cable.sma_cuni086_cryo": {"length_m": 1.0, "temperature": 4.0},
     "cable.sma_ss086_cryo": {"length_m": 1.0, "temperature": 300.0},
