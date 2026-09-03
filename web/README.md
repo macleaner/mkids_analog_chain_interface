@@ -107,6 +107,7 @@ converters. From there:
 | name a stage | the `label` field in that card — this is what a budget refers to and what the file records |
 | tell two stages apart | each row reads *label · model · values* — `ColdAtten` `Attenuator` `-20 dB · 4 K` |
 | reorder a stage | drag it by the `⋮⋮` handle, or use the `▲▼` that appear on the stage you are pointing at |
+| add a second of the same stage | its `⧉` — a copy with the same parameters lands directly after it, named for the same family (`CryoCable` → `CryoCable2`) |
 | set the endpoints | the **Converters** selects at the top of the signal chain |
 | set the DAC carrier power | click the **DAC stage** (stage 0) — `Carrier Power` and `Gain` are in its card, like any other stage's parameters |
 | model a digitizer that is not in the library | pick **Generic DAC** / **Generic ADC**, then state the carrier power, the phase-noise skirt and the ADC's input noise density in their cards |

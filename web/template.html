@@ -1046,6 +1046,30 @@ function addMoveButtons(stage, head){
   }
 }
 
+/* ===================== copying =====================
+   A chain often holds the same hardware twice - two runs of the same cable, a
+   second pad, a matched pair of amplifiers - and re-entering the values by hand
+   is both slower and a chance to get one of them wrong. Python builds the copy
+   from the original's own parameters and inserts it directly after; nothing
+   about the duplicate is worked out here.
+
+   The copy takes the editor, since naming it is the next thing to do: it
+   arrives called CryoCable2, which says which model it is but not which run of
+   cable, and the label is what a budget will call it. */
+function addCopyButton(stage, head){
+  const btn = document.createElement('button');
+  btn.className = 'mv';
+  btn.textContent = '⧉';
+  btn.title = 'add another of this stage, with the same values';
+  btn.onclick = guard(ev => {
+    ev.stopPropagation();                      // not a click on the header
+    CHAIN = call('copy_component', stage.component_index);
+    selected = 'c' + (stage.component_index + 1);
+    renderAll();
+  });
+  head.appendChild(btn);
+}
+
 function renderStages(){
   const host = $('stages');
   host.innerHTML = '';
@@ -1060,12 +1084,16 @@ function renderStages(){
     return;
   }
 
-  if (CHAIN.n_components > 1){
+  // Both of these act on the stage the pointer is over, and both sets of
+  // buttons only appear there, so the chain says where to look for them.
+  if (CHAIN.n_components){
     const hint = document.createElement('p');
     hint.className = 'doc';
     hint.style.margin = '0 0 6px';
-    hint.textContent = 'Drag a stage by its handle to reorder it, '
-                     + 'or use ▲▼ on the stage you are pointing at.';
+    hint.textContent = (CHAIN.n_components > 1
+        ? 'Drag a stage by its handle to reorder it, or use ▲▼ on the stage '
+        + 'you are pointing at. ' : '')
+      + 'Use ⧉ to add another of the same stage.';
     host.appendChild(hint);
   }
 
@@ -1114,6 +1142,10 @@ function renderStages(){
       makeDragHandle(stage, card, head);
       addMoveButtons(stage, head);
     }
+
+    // A converter has no copy: there is one DAC and one ADC, installed rather
+    // than appended, and a second of either is not a chain.
+    if (stage.component_index !== null) addCopyButton(stage, head);
 
     const del = document.createElement('button');
     del.textContent = '×';

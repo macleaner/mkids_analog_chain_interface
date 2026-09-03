@@ -167,6 +167,91 @@ def test_set_param_rebuilds_so_derived_state_is_not_stale():
     assert after - before == pytest.approx(14.0, abs=1e-9)
 
 
+def test_copy_component_inserts_a_twin_after_the_original():
+    """
+    Copying is for the chain that has the same hardware in it twice, so the
+    copy has to carry the original's *values* - not the model's defaults - and
+    land next to it. ``chain.labels`` maps label -> index, so the insertion
+    also has to shift every index at or above the new slot up one, the mirror
+    of what a removal does.
+    """
+    result = chain_api.copy_component(2)              # CryoCable, 0.5 m at 4 K
+    assert result["ok"], result.get("error")
+    assert [s["label"] for s in result["stages"]] == [
+        "AD9082_DAC", "InputAtten", "WarmCable_In", "CryoCable", "CryoCable2",
+        "ColdAtten", "LNA", "ReturnCable", "WarmAmp1", "WarmAmp2", "AD9082_ADC",
+    ]
+    original, copy = [s for s in result["stages"]
+                      if s["label"] in ("CryoCable", "CryoCable2")]
+    assert copy["type_id"] == original["type_id"]
+    assert copy["params"] == original["params"] == {"length_m": 0.5,
+                                                    "temperature": 4.0}
+    labels = chain_api._CHAIN.labels
+    assert labels["CryoCable"] == 2 and labels["CryoCable2"] == 3
+    for label, index in labels.items():
+        assert chain_api._CHAIN._get_label_for_index(index) == label
+
+
+def test_a_copy_is_a_second_component_not_the_same_one_twice():
+    """
+    The copy is built through the registry rather than by copying the object,
+    so the two stages are the same model and not one component sitting in the
+    chain at two indices. If they were aliased, editing either would silently
+    edit both - and a chain with two runs of cable at two temperatures could
+    not be described at all.
+    """
+    assert chain_api.copy_component(2)["ok"]          # CryoCable -> CryoCable2
+    components = chain_api._CHAIN.components
+    assert components[2] is not components[3]
+
+    result = chain_api.set_param(3, "temperature", 50.0)
+    assert result["ok"], result.get("error")
+    stages = {s["label"]: s for s in result["stages"]}
+    assert stages["CryoCable2"]["params"]["temperature"] == 50.0
+    assert stages["CryoCable"]["params"]["temperature"] == 4.0
+
+
+def test_a_copied_stage_is_in_the_cascade():
+    """
+    A second pad is a second 20 dB of loss. A copy that only showed up in the
+    stage list would leave the budget describing a chain that no longer exists.
+    """
+    span = (CARRIER, CARRIER * 1.0001, 2)
+    before = chain_api.sweep_gain(*span)["gain_db"][0]
+    assert chain_api.copy_component(3)["ok"]          # ColdAtten, -20 dB
+    after = chain_api.sweep_gain(*span)["gain_db"][0]
+    assert after - before == pytest.approx(-20.0, abs=1e-9)
+
+
+def test_a_copy_takes_the_next_free_number_in_its_family():
+    """
+    Labels are unique within a chain, so the copy cannot reuse the original's,
+    and counting up from the original's own number can land on one already in
+    use - here WarmAmp1's copy cannot be WarmAmp2.
+    """
+    result = chain_api.copy_component(6)              # WarmAmp1, WarmAmp2 taken
+    assert result["ok"], result.get("error")
+    assert [s["label"] for s in result["stages"]][-4:] == [
+        "WarmAmp1", "WarmAmp3", "WarmAmp2", "AD9082_ADC"]
+
+
+def test_an_unregistered_component_is_refused_rather_than_shallow_copied():
+    """
+    A component a script appended directly cannot be rebuilt from a type id,
+    and putting the same object in the chain twice would alias two stages. The
+    call says so instead.
+    """
+    class BespokeThing(PassiveComponent):
+        def gain(self, frequency):
+            return 0.0
+
+    chain_api._CHAIN.add_component(BespokeThing(), label="Mystery")
+    result = chain_api.copy_component(len(chain_api._CHAIN.components) - 1)
+    assert not result["ok"]
+    assert "not registered" in result["error"]
+    assert len(chain_api._CHAIN.components) == 9      # nothing was added
+
+
 def test_remove_component_reindexes_labels():
     """
     ``chain.labels`` maps label -> index, so removing a component must drop the

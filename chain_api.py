@@ -41,7 +41,7 @@ from utils import kb, to_dbm
 
 __all__ = [
     "catalog", "component_specs", "presets", "load_preset", "new_chain", "describe",
-    "add_component", "remove_component", "move_component",
+    "add_component", "copy_component", "remove_component", "move_component",
     "set_param", "set_label",
     "set_digitizer", "set_digitizer_param",
     "set_name", "set_description", "set_metadata",
@@ -443,6 +443,29 @@ def _label_stem(type_id: str) -> str:
     return "".join(word.capitalize() for word in family.split("_")) or "Stage"
 
 
+def _copy_label(label: str) -> str:
+    """
+    A free label in the same family as ``label``: CryoCable -> CryoCable2,
+    Attenuator1 -> Attenuator2.
+
+    A copy is a second instance of the same hardware, so its name should say so
+    - but labels are unique within a chain, which rules out reusing the
+    original's. A trailing number belongs to the family rather than to the
+    name, so it is counted on rather than appended to: copies of Attenuator1
+    are Attenuator2, Attenuator3, not Attenuator11, Attenuator111. Counting up
+    from the original's own number keeps a copy after the thing it was copied
+    from, which lowest-free-number would not.
+    """
+    stem = label.rstrip("0123456789")
+    tail = label[len(stem):]
+    if not stem:                          # a label that is only digits
+        stem, tail = label, ""
+    number = int(tail) + 1 if tail else 2
+    while f"{stem}{number}" in _CHAIN.labels:
+        number += 1
+    return f"{stem}{number}"
+
+
 def _default_label(type_id: str) -> str:
     """
     A generic label for a newly added component: Cable1, Attenuator2, and so on
@@ -546,6 +569,51 @@ def add_component(type_id: str, params: Optional[Dict[str, Any]] = None,
     """
     component = registry.create(type_id, params or {})
     _CHAIN.add_component(component, label=label or _default_label(type_id))
+    return _describe()
+
+
+@_guard
+def copy_component(component_index: int) -> Dict[str, Any]:
+    """
+    Duplicate an appended component, inserting the copy directly after it.
+
+    This is for the chain that has the same hardware in it twice - two runs of
+    the same cable, a second pad, a matched pair of amplifiers - where copying
+    is both quicker than re-entering the parameters and more faithful: the copy
+    starts from exactly the values the original holds, not from the model's
+    defaults.
+
+    It is rebuilt through the registry rather than copied as an object, so its
+    interpolators are set up from its own parameters and a later edit to either
+    instance cannot reach the other - the two are the same model, not the same
+    component in two places. An unregistered component cannot be rebuilt and is
+    refused rather than shallow-copied.
+
+    The copy lands next to its original because that is where a repeated stage
+    usually belongs, and takes a label from the same family (see
+    :func:`_copy_label`); reorder or rename it from there like any other stage.
+    """
+    if not 0 <= component_index < len(_CHAIN.components):
+        raise IndexError(
+            f"component index {component_index} out of range "
+            f"(chain has {len(_CHAIN.components)})")
+    existing = _CHAIN.components[component_index]
+    type_id = getattr(existing, "type_id", None)
+    if type_id is None:
+        raise TypeError(f"{type(existing).__name__} is not registered, so it "
+                        f"cannot be rebuilt as a copy")
+    original = next((label for label, idx in _CHAIN.labels.items()
+                     if idx == component_index), None)
+    label = _copy_label(original) if original else _default_label(type_id)
+
+    at = component_index + 1
+    _CHAIN.components.insert(at, registry.create(type_id, dict(existing.params),
+                                                 name=label))
+    # chain.labels maps label -> index, so an insertion shifts every index at or
+    # above the new slot up one before the copy's own label points at it.
+    _CHAIN.labels = {name: (idx + 1 if idx >= at else idx)
+                     for name, idx in _CHAIN.labels.items()}
+    _CHAIN.labels[label] = at
     return _describe()
 
 
