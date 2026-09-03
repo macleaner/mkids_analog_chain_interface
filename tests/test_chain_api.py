@@ -110,6 +110,113 @@ def test_sweep_gain_matches_total_gain():
     result = chain_api.sweep_gain(1e8, 3e9, 17)
     expected = np.asarray(chain_api._CHAIN.total_gain(freq), dtype=float)
     assert result["gain_db"] == pytest.approx(list(expected), rel=1e-12)
+    # Named planes are optional, and left out the sweep is the whole path: the
+    # curve the plot has always drawn is still what an unqualified call returns.
+    stages = chain_api._CHAIN.stages()
+    assert (result["from_plane"], result["to_plane"]) == (0, len(stages))
+    assert result["stage_labels"] == [label for label, _c, _k in stages]
+
+
+def test_a_gain_span_sums_only_the_stages_between_its_planes():
+    """
+    The point of naming a plane pair: the DAC output to the LNA input is the
+    four stages in between and nothing else, so it is the input line's loss
+    rather than the total with the amplifiers subtracted back off.
+    """
+    freq = np.linspace(1e8, 3e9, 9)
+    result = chain_api.sweep_gain(1e8, 3e9, 9, False,
+                                  "AD9082_DAC", "output", "LNA", "input")
+    assert result["ok"], result.get("error")
+    assert result["from_label"] == "AD9082_DAC (output)"
+    assert result["to_label"] == "LNA (input)"
+    assert result["stage_labels"] == ["InputAtten", "WarmCable_In",
+                                      "CryoCable", "ColdAtten"]
+
+    # The number is the model's, summed over exactly those stages.
+    expected = sum(component.gain(freq) for _label, component, _kind
+                   in chain_api._CHAIN.stages()[1:5])
+    assert result["gain_db"] == pytest.approx(list(expected), rel=1e-12)
+    # And it is a loss, where the whole chain is a gain - the same sweep read
+    # between two planes says something the total cannot.
+    assert max(result["gain_db"]) < 0.0
+    assert chain_api.sweep_gain(1e8, 3e9, 9)["gain_db"][0] > 0.0
+
+
+def test_a_stage_named_at_both_ends_is_that_stage_alone():
+    """One stage's own gain curve, which is the narrowest span worth asking
+    for, and the check that the two planes are read independently."""
+    freq = np.linspace(1e8, 3e9, 9)
+    result = chain_api.sweep_gain(1e8, 3e9, 9, False, "LNA", "input",
+                                  "LNA", "output")
+    assert result["stage_labels"] == ["LNA"]
+    lna = chain_api._CHAIN.components[chain_api._CHAIN.get_index("LNA")]
+    assert result["gain_db"] == pytest.approx(list(lna.gain(freq)), rel=1e-12)
+
+
+def test_two_names_for_one_plane_give_the_same_span():
+    """
+    A stage's output plane and the next stage's input plane are one plane, and
+    the view offers both names because they say which stage a user is thinking
+    about. They must not compute two different answers.
+    """
+    by_output = chain_api.sweep_gain(1e8, 3e9, 9, False,
+                                     "AD9082_DAC", "output", "LNA", "input")
+    by_input = chain_api.sweep_gain(1e8, 3e9, 9, False,
+                                    "InputAtten", "input", "LNA", "input")
+    assert by_input["gain_db"] == by_output["gain_db"]
+    assert by_input["from_plane"] == by_output["from_plane"]
+    # The description still names the stage that was asked about, though.
+    assert by_input["from_label"] == "InputAtten (input)"
+
+
+def test_a_span_of_one_plane_is_zero_db_and_says_it_summed_nothing():
+    """
+    Nothing lies between a plane and itself, so 0 dB is the answer rather than
+    a degenerate case to refuse. The empty ``stage_labels`` is what tells a
+    view that the flat line is that and not a broken curve.
+    """
+    result = chain_api.sweep_gain(1e8, 3e9, 5, False, "LNA", "input",
+                                  "LNA", "input")
+    assert result["stage_labels"] == []
+    assert result["gain_db"] == [0.0] * 5
+    assert result["extrapolated"] == []
+
+
+def test_a_converter_offers_only_its_analog_plane():
+    """
+    A DAC's input and an ADC's output are digital: no gain is measured across
+    them and no noise is referred to them, so neither is offered as a plane.
+    The DAC output is where the analog path starts and the ADC input is where
+    it ends, and those are the two that appear.
+    """
+    planes = chain_api.describe()["planes"]
+    by_reference = {}
+    for plane in planes:
+        by_reference.setdefault(plane["reference"], []).append(plane["at"])
+
+    assert by_reference["AD9082_DAC"] == ["output"]
+    assert by_reference["AD9082_ADC"] == ["input"]
+    assert by_reference["LNA"] == ["input", "output"]     # a stage keeps both
+    # First and last in the list, so a view offering them in order opens on the
+    # ends of the analog path rather than on a digital one.
+    assert planes[0]["display"] == "AD9082_DAC (output)"
+    assert planes[-1]["display"] == "AD9082_ADC (input)"
+
+
+def test_the_total_gain_is_the_dac_output_to_the_adc_input():
+    """
+    With no gain on either converter, the span between their analog planes is
+    the whole chain's gain. The two have to agree exactly - a difference would
+    mean a converter was contributing gain somewhere.
+    """
+    whole = chain_api.sweep_gain(1e8, 3e9, 9)
+    analog = chain_api.sweep_gain(1e8, 3e9, 9, False,
+                                  "AD9082_DAC", "output",
+                                  "AD9082_ADC", "input")
+    assert analog["ok"], analog.get("error")
+    assert analog["gain_db"] == whole["gain_db"]
+    # Not by summing the same stages: the wider span includes both converters.
+    assert analog["stage_labels"] == whole["stage_labels"][1:-1]
 
 
 def test_referred_noise_sweep_matches_the_budget_at_that_offset():
@@ -533,7 +640,7 @@ def test_set_digitizer_matches_signal_chain_directly():
     chain_api.new_chain("Compare")
     chain_api.add_component("amplifier.asu_3ghz_lna", {}, "LNA")
     chain_api.set_digitizer("converter.ad9082_dac", "converter.ad9082_adc",
-                            {"carrier_power_dbm": -10.0}, {"gain_db": 3.0})
+                            {"carrier_power_dbm": -10.0}, {})
     actual = chain_api.budget("LNA", "input", CARRIER, SPECTRAL)
 
     direct = SignalChain(name="Compare")
@@ -541,7 +648,7 @@ def test_set_digitizer_matches_signal_chain_directly():
                          label="LNA")
     direct.set_digitizer(
         registry.create("converter.ad9082_dac", {"carrier_power_dbm": -10.0}),
-        registry.create("converter.ad9082_adc", {"gain_db": 3.0}))
+        registry.create("converter.ad9082_adc", {}))
     expected = direct.noise_budget("LNA", CARRIER, SPECTRAL, at="input")
 
     assert actual["total_w_per_hz"] == pytest.approx(
@@ -627,7 +734,6 @@ def test_the_catalog_carries_the_groups_a_card_is_laid_out_from():
         ("phase_noise_offset_hz", "Noise parameters"),
         ("phase_noise_slope_db_per_decade", "Noise parameters"),
         ("noiseless", "Noise parameters"),
-        ("gain_db", None),
     ]
 
 
@@ -661,9 +767,8 @@ def test_a_generic_digitizer_can_replace_the_modelled_one():
         {"carrier_power_dbm": -10.0, "phase_noise_dbc_per_hz": -80.0,
          "phase_noise_offset_hz": 1000.0,
          "phase_noise_slope_db_per_decade": -10.0,
-         "noiseless": False, "gain_db": 0.0},
-        {"noise_density_dbm_per_hz": -145.0, "noiseless": False,
-         "gain_db": 0.0})
+         "noiseless": False},
+        {"noise_density_dbm_per_hz": -145.0, "noiseless": False})
     assert result["ok"], result.get("error")
     assert result["digitizer"]["dac"]["params"]["phase_noise_dbc_per_hz"] == -80.0
 
@@ -679,7 +784,7 @@ def test_a_noiseless_digitizer_leaves_the_components_to_be_judged():
     installed at all. That is the question the flag exists to answer - how good
     is this chain, separately from how good the digitizer on each end is.
     """
-    ideal = {"noiseless": True, "gain_db": 0.0}
+    ideal = {"noiseless": True}
     chain_api.set_digitizer(
         "converter.generic_dac", "converter.generic_adc",
         {"carrier_power_dbm": -10.0, "phase_noise_dbc_per_hz": -80.0,
@@ -786,6 +891,33 @@ def test_a_sweep_past_the_datasheets_has_a_curve_and_says_which_stages():
     # Enough to draw and to name: the model's label, not just an index.
     assert flagged["LNA"]["type_label"] == "ASU 3 GHz LNA (~6 K)"
     assert roundtrips(result)
+
+
+def test_only_the_stages_in_the_span_are_flagged():
+    """
+    A lane shades part of a curve, so it may only name a stage that is in that
+    curve. The same 12 GHz sweep read from the DAC to the LNA input is short of
+    data in one place - the cryo cable - even though five stages of the chain
+    are, because the other four are not being summed.
+    """
+    whole = {stage["label"] for stage
+             in chain_api.sweep_gain(1e8, 12e9, 41)["extrapolated"]}
+    assert whole == {"LNA", "WarmAmp1", "WarmAmp2", "CryoCable", "ReturnCable"}
+
+    span = chain_api.sweep_gain(1e8, 12e9, 41, False,
+                                "AD9082_DAC", "output", "LNA", "input")
+    assert [stage["label"] for stage in span["extrapolated"]] == ["CryoCable"]
+    # The index is the stage's place in the whole chain, as `describe` reports
+    # it, and not its offset within the span - a view names stages by it.
+    assert span["extrapolated"][0]["stage_index"] == 3
+    assert span["extrapolated"][0]["regions_hz"] == [[pytest.approx(10e9),
+                                                      pytest.approx(12e9)]]
+
+    # And a span clear of the flagged stages is unshaded on a sweep the chain
+    # as a whole cannot cover - the positive statement, restricted.
+    clear = chain_api.sweep_gain(1e8, 12e9, 41, False,
+                                 "AD9082_DAC", "output", "CryoCable", "input")
+    assert clear["extrapolated"] == []
 
 
 def test_nothing_is_flagged_where_every_stage_has_data():
@@ -980,6 +1112,41 @@ def test_round_trip_preserves_the_chain():
     assert reloaded["ok"], reloaded.get("error")
     assert reloaded["stages"] == before["stages"]
     assert reloaded["name"] == before["name"]
+    # What this build wrote, this build reads exactly: an empty list is the
+    # positive statement that nothing in the file had to be filled in.
+    assert reloaded["load_warnings"] == []
+
+
+def test_loading_reports_what_the_file_did_not_specify():
+    """
+    A view cannot find these afterwards - a parameter that was defaulted in
+    looks like one the file stated, and a converter that could not be rebuilt
+    is simply absent from the chain that comes back. So the load has to report
+    them, or the file loading is taken as saying the chain is the one it
+    describes.
+    """
+    saved_earlier = json.dumps({
+        "format_version": 2, "name": "Saved earlier", "metadata": {},
+        "components": [{"type": "attenuator", "name": "InputAtten",
+                        "params": {"attenuation": -10.0,
+                                   "temperature": 300.0}}],
+        "labels": {"InputAtten": 0},
+        # Recorded while a converter still had a gain, at the 0 dB it
+        # defaulted to - the state every file saved before it went is in.
+        "digitizer": {
+            "dac": {"type": "converter.ad9082_dac", "name": "AD9082_DAC",
+                    "params": {"carrier_power_dbm": -10.0, "gain_db": 0.0}},
+            "adc": {"type": "converter.ad9082_adc", "name": "AD9082_ADC",
+                    "params": {"gain_db": 0.0}},
+        },
+    })
+    result = chain_api.from_json(saved_earlier)
+    assert result["ok"], result.get("error")
+    assert len(result["load_warnings"]) == 2
+    assert all("gain_db" in note for note in result["load_warnings"])
+    # The chain is complete regardless: 0 dB is what a converter now is.
+    assert result["has_digitizer"] is True
+    assert chain_api.sweep_gain(1e8, 3e9, 3)["gain_db"][0] == pytest.approx(-10.0)
 
 
 def test_exported_json_loads_as_a_signal_chain():
@@ -1004,6 +1171,10 @@ def test_exported_json_loads_as_a_signal_chain():
     (lambda: chain_api.sweep_gain(1e9, 1e9, 10), "must exceed"),
     (lambda: chain_api.sweep_gain(1e9, 2e9, 1), "at least 2 points"),
     (lambda: chain_api.sweep_gain(0.0, 2e9, 10, True), "positive start"),
+    (lambda: chain_api.sweep_gain(1e8, 3e9, 10, False, "LNA", "output",
+                                  "LNA", "input"), "upstream of from_plane"),
+    (lambda: chain_api.sweep_gain(1e8, 3e9, 10, False, "NoSuchPlane", "output"),
+     "cannot resolve"),
     (lambda: chain_api.from_json("{not json"), ""),
     (lambda: chain_api.set_digitizer("converter.ad9082_adc"),
      "cannot be the chain's DAC"),

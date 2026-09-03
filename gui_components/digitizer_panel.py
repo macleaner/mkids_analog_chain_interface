@@ -46,21 +46,10 @@ class DigitizerPanel(QWidget):
         self.carrier_power_spin.setDecimals(1)
         config_layout.addRow("Carrier Power:", self.carrier_power_spin)
         
-        # DAC Gain
-        self.dac_gain_spin = QDoubleSpinBox()
-        self.dac_gain_spin.setRange(-20, 20)
-        self.dac_gain_spin.setValue(0.0)
-        self.dac_gain_spin.setSuffix(" dB")
-        self.dac_gain_spin.setDecimals(1)
-        config_layout.addRow("DAC Gain:", self.dac_gain_spin)
-        
-        # ADC Gain
-        self.adc_gain_spin = QDoubleSpinBox()
-        self.adc_gain_spin.setRange(-20, 20)
-        self.adc_gain_spin.setValue(0.0)
-        self.adc_gain_spin.setSuffix(" dB")
-        self.adc_gain_spin.setDecimals(1)
-        config_layout.addRow("ADC Gain:", self.adc_gain_spin)
+        # No gain inputs: a converter is the boundary of the analog path,
+        # not a stage along it, so it has no gain (see ConverterComponent).
+        # Gain at either end is an amplifier or an attenuator and is added to
+        # the chain as one.
         
         config_group.setLayout(config_layout)
         layout.addWidget(config_group)
@@ -83,8 +72,6 @@ class DigitizerPanel(QWidget):
         return {
             'model': self.model_combo.currentText(),
             'carrier_power_dbm': self.carrier_power_spin.value(),
-            'dac_gain_db': self.dac_gain_spin.value(),
-            'adc_gain_db': self.adc_gain_spin.value()
         }
     
     def set_digitizer_config(self, config):
@@ -95,7 +82,3 @@ class DigitizerPanel(QWidget):
                 self.model_combo.setCurrentIndex(index)
         if 'carrier_power_dbm' in config:
             self.carrier_power_spin.setValue(config['carrier_power_dbm'])
-        if 'dac_gain_db' in config:
-            self.dac_gain_spin.setValue(config['dac_gain_db'])
-        if 'adc_gain_db' in config:
-            self.adc_gain_spin.setValue(config['adc_gain_db'])

@@ -47,17 +47,16 @@ GOLDEN_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 # Every concrete component in hardware_models must appear here, so that adding a
 # component without a snapshot fails test_every_component_is_characterized.
 COMPONENT_SPECS = {
-    "AD9082_DAC": {"carrier_power_dbm": -20.0, "gain_db": 0.0},
-    "AD9082_ADC": {"gain_db": 0.0},
+    "AD9082_DAC": {"carrier_power_dbm": -20.0},
+    "AD9082_ADC": {},
     # Snapshotted noisy, at non-default settings: the noiseless switch returns
     # zero for every input, so a snapshot of it would pin nothing that could
     # change. tests/test_noise_frequencies.py covers that branch instead.
     "GenericDAC": {"carrier_power_dbm": -20.0, "phase_noise_dbc_per_hz": -100.0,
                    "phase_noise_offset_hz": 1000.0,
                    "phase_noise_slope_db_per_decade": -20.0,
-                   "noiseless": False, "gain_db": 0.0},
-    "GenericADC": {"noise_density_dbm_per_hz": -150.0, "noiseless": False,
-                   "gain_db": 0.0},
+                   "noiseless": False},
+    "GenericADC": {"noise_density_dbm_per_hz": -150.0, "noiseless": False},
     "ASU_3GHz_LNA": {},
     "ZX60_3018Gplus": {},
     "ZX60_83LN_Splus": {},

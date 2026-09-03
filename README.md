@@ -202,9 +202,9 @@ if chain.load_warnings:
   "saved_utc": "2026-08-24T14:02:11+00:00",
   "digitizer": {
     "dac": {"type": "converter.ad9082_dac", "name": "AD9082_DAC",
-            "params": {"carrier_power_dbm": -20.0, "gain_db": 0.0}},
+            "params": {"carrier_power_dbm": -20.0}},
     "adc": {"type": "converter.ad9082_adc", "name": "AD9082_ADC",
-            "params": {"gain_db": 0.0}}
+            "params": {}}
   },
   "components": [
     {"type": "attenuator", "name": "Attenuator", "label": "InputAtten",
@@ -221,6 +221,14 @@ Properties that matter for bookkeeping:
 - **`params` is what the component was actually built with**, recorded by the
   component itself rather than inferred from its constructor signature. A
   parameter can no longer be silently dropped and replaced by a default.
+- **A parameter that has been removed stays readable.** `register` takes a
+  `retired` list beside `params`, doing for a deleted parameter what `aliases`
+  does for a renamed class. A file recording the value it used to default to
+  loads with a warning, since that value is what the component now does
+  regardless; a file recording anything else is refused, because loading it as
+  the default would drop what that value said about the hardware. The converters
+  went through this when their `gain_db` was removed — see
+  `ConverterComponent` in [`component.py`](component.py) for why it went.
 - **`label` is a stable handle** for a point in the chain, so an analysis result
   can refer to "noise at the LNA" and still resolve after a reorder.
 - **Anything the file failed to fully specify appears in `chain.load_warnings`**
@@ -478,6 +486,7 @@ Cryogenic cables and attenuators adjust their characteristics based on temperatu
 **Methods:**
 - `add_component(component, label=None)`: Add component to chain
 - `gain_between(start, end, frequency)`: Calculate gain from start to end
+- `gain_between_planes(from_plane, to_plane, frequency)`: Gain between two planes, summed over the stages in between only
 - `noise_at_point(reference, frequency, contributions=False)`: Calculate noise at a point
 - `total_gain(frequency)`: Total chain gain
 - `output_noise(frequency)`: Noise at output

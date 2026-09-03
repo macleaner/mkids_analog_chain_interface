@@ -109,10 +109,11 @@ converters. From there:
 | reorder a stage | drag it by the `⋮⋮` handle, or use the `▲▼` that appear on the stage you are pointing at |
 | add a second of the same stage | its `⧉` — a copy with the same parameters lands directly after it, named for the same family (`CryoCable` → `CryoCable2`) |
 | set the endpoints | the **Converters** selects at the top of the signal chain |
-| set the DAC carrier power | click the **DAC stage** (stage 0) — `Carrier Power` and `Gain` are in its card, like any other stage's parameters |
+| set the DAC carrier power | click the **DAC stage** (stage 0) — `Carrier Power` is in its card, like any other stage's parameters |
 | model a digitizer that is not in the library | pick **Generic DAC** / **Generic ADC**, then state the carrier power, the phase-noise skirt and the ADC's input noise density in their cards |
 | judge the chain without its converters | tick `Noiseless` on either card — that end drops out of the budget rather than contributing a small line to discount |
 | remove an endpoint | its `×`, or its select back to *— none —* |
+| read the gain across part of the chain | the **from plane** / **to plane** selects on the gain plot — left alone they are the ends of the chain |
 | name the chain, or annotate it | click the chain name in the top bar |
 | see what any of that saves as | the **Chain file** tab, right-hand column |
 | carry on in Jupyter | **notebook.ipynb**, top bar |
@@ -163,8 +164,8 @@ possible to type.
 A card's layout comes from the same place. A `ParamSpec` may declare a `group`,
 which is the heading of a sub-box the parameter is collected into — the Generic
 DAC's card puts its four skirt knobs under **Noise parameters**, leaving
-`Carrier Power` and `Gain` outside it, because what the DAC puts out is not part
-of its skirt. Six knobs in a flat list say nothing about which four describe one
+`Carrier Power` outside it, because what the DAC puts out is not part of its
+skirt. Five knobs in a flat list say nothing about which four describe one
 thing. The view opens a box whenever the group changes as it renders down the
 declared order, so it neither reorders anything nor knows any parameter by name;
 `register` requires a group to be one unbroken run, since a split one would
@@ -212,6 +213,53 @@ operating point being worked at. The figures are for the registry defaults,
 which is what a double-click installs; the `at defaults` row says which values
 those were, for the models where it makes a difference.
 
+### Gain between two planes
+
+The gain plot's two selects say where the curve starts and where it ends. Left
+alone they are the ends of the chain, so the plot opens on the total gain of the
+whole path — the same curve, and the same number, as `SignalChain.total_gain`.
+Move them and the curve is what a carrier picks up between those two planes
+instead: **AD9082_DAC (output)** to **LNA (input)** is the input line's loss on
+its own, and one stage named at both ends is that stage's gain curve.
+
+A converter offers one plane, not two. The DAC's output is where the analog path
+starts and the ADC's input is where it stops; the other side of each is digital,
+so there is no gain to measure across it and no noise to refer to it, and
+neither appears in the list. **A converter has no gain** either — it is the
+boundary of the path, not a stage along it, and a level change at a digital
+boundary scales the digital signal rather than saying anything about the analog
+chain. Real gain at either end is an amplifier or an attenuator, which belongs
+in the chain as a stage of its own where its noise and its frequency response
+are accounted for too. So the total gain *is* the DAC output to the ADC input,
+and the two selections agree exactly rather than nearly.
+
+The planes are the ones a noise budget can be referred to, offered from the same
+list, so `LNA (input)` means the same plane on both plots. Two names can be one
+plane — a stage's output is the next stage's input — and both are offered
+because which one you reach for says which stage you have in mind; they compute
+the same span. `to plane` offers only what lies downstream of `from plane`: gain
+accumulates along the path, and the reverse is a de-embedding rather than a
+shorter span, so it is left out of the list instead of being computed and
+refused. The two may be the same plane, which is 0 dB — the caption says nothing
+lies between them, so the flat line reads as the answer and not a broken curve.
+
+What makes this worth having rather than arithmetic on the total is that the
+span is summed over its own stages and nothing else:
+
+* **a stage outside the span contributes nothing**, including to the shaded
+  lanes below. The DAC to the LNA input is unshaded over a 0.1–12 GHz sweep
+  even though the amplifiers further along the chain run out of datasheet
+  there — the span they would shade is not the span being drawn.
+* **a stage with no data cannot spoil a span it is not in.** Were the curve a
+  difference of two cumulative gains, one stage answering NaN anywhere in the
+  chain would blank every span in it.
+
+The stages that were summed are named in the caption's tooltip, in signal
+order, so the curve can be checked against the chain that produced it. The pair
+is a view setting and not part of the chain, so it is not in the saved file, and
+removing a stage a selection names drops that end back to the end of the chain
+rather than erroring.
+
 ### Where the datasheets run out
 
 Sweep the gain plot past the narrowest part in the chain and the curve keeps
@@ -240,7 +288,9 @@ the sweep, and the plot shades what that leaves:
   height to the rest.
 * **nothing shaded is a statement too.** Inside every stage's band the list is
   empty and the plot shades nothing, so an unmarked curve is measured data
-  rather than an unimplemented check.
+  rather than an unimplemented check. Only the stages the curve is summed over
+  can appear, so narrowing the
+  [plane pair](#gain-between-two-planes) narrows the lanes with it.
 
 The regions are cut at the band edge, not at the nearest swept point, so they do
 not move when the point count does. Which stages and which frequencies are
@@ -469,7 +519,10 @@ version-independent and drop `scipy.optimize` from the runtime path.
   range ([`hardware_models.py:137`](../hardware_models.py#L137)), pre-existing
   and unrelated to this build. `chain_api` maps non-finite to `null` and uPlot
   renders it as a gap.
-- A chain file that loads with warnings loads silently here. `SignalChain.load`
-  records them on `chain.load_warnings` and the Qt GUI shows them in a dialog;
-  the browser drops them, so a file that had a parameter defaulted in looks
-  identical to one that did not.
+- Load warnings are shown once, in the band above the panes, and not kept. **open
+  chain…** reports whatever the file did not fully specify — `from_json` returns
+  `chain.load_warnings` and the band lists it — because a parameter that was
+  defaulted in, or a converter that could not be rebuilt, is invisible in the
+  chain that comes back. But the band times out and the notes are not recorded
+  anywhere in the page, so a chain edited for an hour no longer says how it
+  arrived. The Qt GUI's dialog has the same shape of gap.

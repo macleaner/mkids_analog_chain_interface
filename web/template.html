@@ -254,6 +254,12 @@ body.ry,body.ry *{cursor:row-resize!important;user-select:none!important}
 
 .ctl{display:grid;grid-template-columns:1fr 116px;gap:8px;align-items:center;
   margin-bottom:6px;font-size:var(--fs1)}
+/* A row whose control is a plane. Stage labels are free text and can be any
+   length, so no width makes clipping impossible, but the value column is what
+   a user reads the plane off without opening the list - and 116px cuts
+   "AD9082_DAC (output)" short of the word that says which end of it is meant.
+   Only the plots row uses this; the third column is not wide enough to give. */
+.ctl.wide{grid-template-columns:1fr 200px}
 .seg{display:flex;gap:0;margin-bottom:8px}
 .seg button{border-radius:0;flex:1;padding:3px 6px;font-size:var(--fs2)}
 .seg button:first-child{border-radius:5px 0 0 5px}
@@ -307,6 +313,10 @@ tr.dom td{color:var(--accent)}
 #err{display:none;margin:9px 13px;padding:8px 11px;border-radius:5px;
   background:#3a2422;border:1px solid var(--bad);color:#f0b3ae;
   font-family:var(--mono);font-size:var(--fs2);white-space:pre-wrap}
+/* The same band, for what a file said rather than for something that went
+   wrong. A load that reported warnings is a load that succeeded, and colouring
+   it like a failure would say otherwise. */
+#err.note{background:#33291a;border-color:var(--accent);color:#e6cf9c}
 /* uPlot's stylesheet sets the legend at a size of its own, which is the one
    piece of type on the page that would not move with --fs. Pinned to the scale
    at the size it already was. */
@@ -414,10 +424,9 @@ this page's plots and table over it — open it in Jupyter">notebook.ipynb</butt
 
   <div id="plots">
     <div class="plot">
-      <div class="cap" title="A shaded lane marks a stage that is outside its
-datasheet over those frequencies: its gain there is extended from the measured
-curve, not measured. One lane per stage, named in the legend — click one to
-hide it.">total gain vs carrier frequency</div>
+      <div class="cap" id="gcap">total gain vs carrier frequency</div>
+      <div class="ctl wide"><label>from plane</label><select id="gfrom"></select></div>
+      <div class="ctl wide"><label>to plane</label><select id="gto"></select></div>
       <div class="ctl"><label>span (GHz)</label>
         <span style="display:flex;gap:5px">
           <input id="g0" value="0.1"><input id="g1" value="3.0"></span></div>
@@ -425,7 +434,7 @@ hide it.">total gain vs carrier frequency</div>
     </div>
     <div class="plot">
       <div class="cap" id="ncap">noise vs spectral offset</div>
-      <div class="ctl"><label>reference plane</label><select id="nplane"></select></div>
+      <div class="ctl wide"><label>reference plane</label><select id="nplane"></select></div>
       <div class="ctl"><label>span (Hz)</label>
         <span style="display:flex;gap:5px">
           <input id="n0" value="0.01"><input id="n1" value="1000"></span></div>
@@ -501,13 +510,20 @@ let gainPlot = null, noisePlot = null;
 const $ = id => document.getElementById(id);
 const num = v => Number(String(v).trim());
 
-function showError(msg){
+/* The band above the grid, for both what went wrong and what a file said.
+   `note` styles it as the latter and leaves it up longer: a list of load
+   warnings is read line by line, where a bad parameter is one line glanced at
+   and dismissed. */
+function showBanner(msg, note){
   const box = $('err');
   box.textContent = msg;
+  box.classList.toggle('note', !!note);
   box.style.display = 'block';
-  clearTimeout(showError._t);
-  showError._t = setTimeout(() => { box.style.display = 'none'; }, 9000);
+  clearTimeout(showBanner._t);
+  showBanner._t = setTimeout(() => { box.style.display = 'none'; },
+                             note ? 30000 : 9000);
 }
+function showError(msg){ showBanner(msg, false); }
 
 /* Any handler that talks to Python funnels through here, so one bad parameter
    shows a message instead of leaving the page half-updated. */
@@ -1260,24 +1276,28 @@ function renderStages(){
 }
 
 /* ===================== budget ===================== */
-/* The budget table and the noise plot both refer to a plane and both offer the
-   same list, so they are filled from one function. An option's value is the
-   [reference, at] pair the Python side takes, JSON-encoded; the plot carries
-   one extra option whose value is `null`, the chain output after the ADC, which
-   is what `sweep_noise` computes when given no reference.
+/* Every select that names a plane - the budget table's, the noise plot's, and
+   the gain plot's two - offers the same list, so they are filled from one
+   function. An option's value is the [reference, at] pair the Python side
+   takes, JSON-encoded; `endLabel`, where a caller wants it, adds one extra
+   option whose value is `null` for an open end of the chain, which is a plane
+   but no stage's plane and so has no pair to name it by.
+
+   `keep` narrows the list to the planes a caller can accept.
 
    Returns false if the previously chosen plane is gone, so the caller can pick
-   its own fallback - the table wants the LNA input, the plot wants the output. */
-function fillPlanes(sel, outputLabel){
+   its own fallback - the table wants the LNA input, the plots want the ends. */
+function fillPlanes(sel, endLabel, keep){
   const previous = sel.value;
   sel.innerHTML = '';
-  if (outputLabel){
+  if (endLabel){
     const opt = document.createElement('option');
     opt.value = 'null';
-    opt.textContent = outputLabel;
+    opt.textContent = endLabel;
     sel.appendChild(opt);
   }
   for (const plane of CHAIN.planes){
+    if (keep && !keep(plane)) continue;
     const opt = document.createElement('option');
     opt.value = JSON.stringify([plane.reference, plane.at]);
     opt.textContent = plane.display;
@@ -1289,6 +1309,44 @@ function fillPlanes(sel, outputLabel){
   return true;
 }
 
+/* Where a plane sits in the signal path, numbered as Python numbers them: plane
+   k is immediately before stage k, so a stage's input plane is its own index and
+   its output plane the next one. Two entries in `planes` therefore name the same
+   plane - one stage's output is the next one's input - and both are offered,
+   because which one a user reaches for says which stage they mean. */
+const planeIndex = plane => plane.stage_index + (plane.at === 'output' ? 1 : 0);
+
+/* The plane a gain select names, as an index. Its `null` option is an open end
+   of the chain, which is no stage's plane: the input before the DAC for `from`,
+   the output after the ADC for `to`, so the caller passes which end it is. */
+function gainPlane(sel, open){
+  const chosen = JSON.parse(sel.value || 'null');
+  if (!chosen) return open;
+  const plane = CHAIN.planes.find(p => p.reference === chosen[0]
+                                    && p.at === chosen[1]);
+  return plane ? planeIndex(plane) : open;
+}
+
+/* The gain plot names two planes rather than one, and they are ordered, so `to`
+   offers only what lies downstream of `from`. A span that runs backwards is not
+   a gain along the path at all - Python refuses it - and leaving it out of the
+   list is better than letting a plot go to an error and back.
+
+   The two ends are the chain's own, which are where the analog path begins and
+   ends: a converter has no gain, so the plane before the DAC and the one after
+   the ADC carry the same numbers as the DAC output and the ADC input, and the
+   default span is the total gain either way. They are labelled for the chain
+   rather than for the converters so that they still read correctly on a chain
+   with one end open. */
+function fillGainPlanes(){
+  if (!fillPlanes($('gfrom'), 'chain input'))
+    $('gfrom').value = 'null';
+  const from = gainPlane($('gfrom'), 0);
+  if (!fillPlanes($('gto'), 'chain output',
+                  plane => planeIndex(plane) > from))
+    $('gto').value = 'null';
+}
+
 function renderPlanes(){
   const table = $('plane');
   if (!fillPlanes(table, null)){
@@ -1296,7 +1354,8 @@ function renderPlanes(){
                                           && /lna/i.test(o.textContent));
     table.value = lna ? lna.value : (table.options[0] ? table.options[0].value : '');
   }
-  if (!fillPlanes($('nplane'), 'chain output (after ADC)')) $('nplane').value = 'null';
+  if (!fillPlanes($('nplane'), 'chain output')) $('nplane').value = 'null';
+  fillGainPlanes();
 }
 
 function fmt(value, col){
@@ -1523,13 +1582,39 @@ function shadePlugin(bands, first){
   }}};
 }
 
+/* What the caption says about the lanes, whichever span is drawn. */
+const LANE_NOTE = 'A shaded lane marks a stage that is outside its datasheet '
+  + 'over those frequencies: its gain there is extended from the measured '
+  + 'curve, not measured. One lane per stage, named in the legend — click one '
+  + 'to hide it.';
+
 function renderGain(){
   const start = num($('g0').value) * 1e9, stop = num($('g1').value) * 1e9;
-  const result = call('sweep_gain', start, stop, 401, false);
+  // null at either end is that end of the chain - before the DAC, or after the
+  // ADC - and anything else is the same [reference, at] pair the budget sends.
+  const from = JSON.parse($('gfrom').value || 'null');
+  const to = JSON.parse($('gto').value || 'null');
+  const result = call('sweep_gain', start, stop, 401, false,
+                      from ? from[0] : null, from ? from[1] : 'input',
+                      to ? to[0] : null, to ? to[1] : 'output');
+
+  // The whole path keeps the name it has everywhere else. A shorter span is
+  // named by its two planes, because "gain" alone would not say which stages -
+  // and the stages themselves go in the tooltip, so the curve is checkable.
+  const whole = result.from_plane === 0 && result.to_plane === result.n_stages;
+  $('gcap').textContent = whole
+    ? 'total gain vs carrier frequency'
+    : `gain, ${result.from_label} → ${result.to_label}, vs carrier frequency`;
+  $('gcap').title = (result.stage_labels.length
+    ? `Summed over ${result.stage_labels.join(' → ')}. `
+    : 'These are the same plane, so nothing lies between them and the gain '
+      + 'is 0 dB. ') + LANE_NOTE;
+
   const ghz = result.freq_hz.map(f => f / 1e9);   // axis label only, not a result
   const data = [ghz, result.gain_db];
   const series = [{label:'GHz'},
-                  {label:'total gain', stroke:'#d9a441', width:1.6,
+                  {label: whole ? 'total gain' : 'gain',
+                   stroke:'#d9a441', width:1.6,
                    value:(u,v)=>v==null?'—':v.toFixed(2)}];
 
   // Each flagged stage gets a series that draws nothing: it exists for its
@@ -1796,6 +1881,9 @@ $('plane').onchange = guard(renderBudget);
 $('carrier').onchange = guard(() => { renderBudget(); renderNoise(); renderSpecs(); });
 $('spectral').onchange = guard(() => { renderBudget(); renderSpecs(); });
 $('g0').onchange = $('g1').onchange = guard(() => { renderGain(); renderSpecs(); });
+/* Moving `from` can leave `to` upstream of it, so the list is rebuilt first. */
+$('gfrom').onchange = guard(() => { fillGainPlanes(); renderGain(); });
+$('gto').onchange = guard(renderGain);
 $('n0').onchange = $('n1').onchange = $('nplane').onchange = guard(renderNoise);
 
 for (const btn of document.querySelectorAll('#unit button'))
@@ -1905,6 +1993,15 @@ $('fileJson').onchange = async ev => {
     CHAIN = call('from_json', await file.text());
     selected = null;
     renderAll();
+    // The one moment these can be shown. A parameter the file did not specify,
+    // or a converter that could not be rebuilt, is invisible in the chain that
+    // came back - the DAC is simply not there. So the file loading is not on
+    // its own the statement that the chain on screen is the one it describes.
+    const notes = CHAIN.load_warnings || [];
+    if (notes.length)
+      showBanner(`${file.name} loaded, but the file did not fully describe `
+        + `the chain — ${notes.length} note${notes.length > 1 ? 's' : ''}:\n• `
+        + notes.join('\n• '), true);
   } catch (err){ showError('could not load that chain file — ' + err.message); }
   ev.target.value = '';
 };

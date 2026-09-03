@@ -22,12 +22,23 @@ from scipy.optimize import curve_fit
 
 from component import (ActiveComponent, ADCComponent, DACComponent,
                        PassiveComponent, flat_in_spectral)
-from registry import ParamSpec, register
+from registry import ParamSpec, RetiredParam, register
 from utils import kb
 
 
 def exponential(f, A, n, b):
     return A * f**-n + b
+
+
+# Every converter used to declare a gain, which a converter does not have - see
+# `ConverterComponent`. Files that recorded it are still loadable at the 0 dB it
+# defaulted to; one that recorded real gain there is refused rather than quietly
+# flattened, since that gain belongs to a stage nobody has written down yet.
+RETIRED_CONVERTER_GAIN = RetiredParam(
+    "gain_db", 0.0,
+    "a converter is the boundary of the analog path, not a stage along it, so "
+    "gain at either end is an amplifier or an attenuator and belongs in the "
+    "chain as one")
 
 
 # Parameter specs reused across the cable models.
@@ -165,9 +176,8 @@ class AD9082:
                         unit="dBm", minimum=-80.0, maximum=30.0, step=1.0,
                         help="Carrier power at the DAC output. Phase noise "
                              "scales with this."),
-              ParamSpec("gain_db", default=0.0, label="Gain", unit="dB",
-                        minimum=-50.0, maximum=50.0, step=0.5),
-          ))
+          ),
+          retired=(RETIRED_CONVERTER_GAIN,))
 class AD9082_DAC(DACComponent):
     """
     AD9082 Digital-to-Analog Converter.
@@ -175,25 +185,17 @@ class AD9082_DAC(DACComponent):
     Produces frequency-dependent phase noise that scales with carrier power.
     """
 
-    def __init__(self, carrier_power_dbm=0.0, gain_db=0.0, name=None):
+    def __init__(self, carrier_power_dbm=0.0, name=None):
         super().__init__(name=name, params={
             "carrier_power_dbm": carrier_power_dbm,
-            "gain_db": gain_db,
         })
         self.carrier_power_dbm = carrier_power_dbm
-        self.gain_db = gain_db
 
         # Phase noise model (identical to the legacy AD9082).
         f_datasheet = np.asarray([0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000])
         pnoise_dbc_simple = np.asarray([-45, -55, -65, -75, -85, -95, -105, -115, -125])
         pnoise_W = 10**(pnoise_dbc_simple / 10) * 1e-3
         self.popt, self.pcov = curve_fit(exponential, f_datasheet, pnoise_W)
-
-    def gain(self, carrier_frequency):
-        """Return DAC gain in dB."""
-        if isinstance(carrier_frequency, np.ndarray):
-            return np.full_like(carrier_frequency, self.gain_db)
-        return self.gain_db
 
     def carrier_level_db(self, carrier_frequency):
         """
@@ -223,10 +225,7 @@ class AD9082_DAC(DACComponent):
 
 
 @register("converter.ad9082_adc", category="Converters", label="AD9082 ADC",
-          params=(
-              ParamSpec("gain_db", default=0.0, label="Gain", unit="dB",
-                        minimum=-50.0, maximum=50.0, step=0.5),
-          ))
+          retired=(RETIRED_CONVERTER_GAIN,))
 class AD9082_ADC(ADCComponent):
     """
     AD9082 Analog-to-Digital Converter.
@@ -247,9 +246,8 @@ class AD9082_ADC(ADCComponent):
     full_scale_dbm = 1.0
     nyquist_bandwidth_hz = 3e9
 
-    def __init__(self, gain_db=0.0, name=None):
-        super().__init__(name=name, params={"gain_db": gain_db})
-        self.gain_db = gain_db
+    def __init__(self, name=None):
+        super().__init__(name=name, params={})
 
         # SNR (dB below full scale) -> noise power (dBm) -> W -> W/Hz.
         noise_w_per_hz = (
@@ -258,12 +256,6 @@ class AD9082_ADC(ADCComponent):
         self.noise_f = interpolate.interp1d(
             self.snr_frequencies_hz, noise_w_per_hz,
             fill_value='extrapolate', bounds_error=False)
-
-    def gain(self, carrier_frequency):
-        """Return ADC gain in dB."""
-        if isinstance(carrier_frequency, np.ndarray):
-            return np.full_like(carrier_frequency, self.gain_db)
-        return self.gain_db
 
     def noise(self, carrier_frequency, spectral_frequency):
         """
@@ -285,16 +277,16 @@ class AD9082_ADC(ADCComponent):
 # appears in the budget as a line to be discounted by eye.
 NOISELESS_PARAM = ParamSpec(
     "noiseless", default=False, kind="bool", label="Noiseless",
-    help="Make this converter an ideal one: it still applies its gain and, for "
-         "a DAC, still sets the carrier, but contributes no noise at all and so "
-         "drops out of the budget entirely.")
+    help="Make this converter an ideal one: for a DAC it still sets the "
+         "carrier, but it contributes no noise at all and so drops out of the "
+         "budget entirely.")
 
 # The Generic DAC's four noise knobs are collected under one heading in the GUI,
-# so the two that describe what the DAC *puts out* - the carrier power and the
-# gain - are not read as part of the skirt. The carrier power does scale the
-# skirt, being what it is quoted relative to, but it is the output level first
-# and a noise setting only consequently, so it stays outside the box; the help
-# text on both is where that relationship is stated.
+# so the one that describes what the DAC *puts out* - the carrier power - is not
+# read as part of the skirt. The carrier power does scale the skirt, being what
+# it is quoted relative to, but it is the output level first and a noise setting
+# only consequently, so it stays outside the box; the help text on both is where
+# that relationship is stated.
 NOISE_GROUP = "Noise parameters"
 
 
@@ -328,9 +320,8 @@ NOISE_GROUP = "Noise parameters"
                              "is 1/f in power, -20 is 1/f^2, and 0 is a white "
                              "phase-noise floor."),
               replace(NOISELESS_PARAM, group=NOISE_GROUP),
-              ParamSpec("gain_db", default=0.0, label="Gain", unit="dB",
-                        minimum=-50.0, maximum=50.0, step=0.5),
-          ))
+          ),
+          retired=(RETIRED_CONVERTER_GAIN,))
 class GenericDAC(DACComponent):
     """
     Configurable DAC: a carrier at a chosen power with a power-law noise skirt.
@@ -365,14 +356,13 @@ class GenericDAC(DACComponent):
     def __init__(self, carrier_power_dbm=0.0, phase_noise_dbc_per_hz=-85.0,
                  phase_noise_offset_hz=1.0,
                  phase_noise_slope_db_per_decade=-10.0, noiseless=False,
-                 gain_db=0.0, name=None):
+                 name=None):
         super().__init__(name=name, params={
             "carrier_power_dbm": carrier_power_dbm,
             "phase_noise_dbc_per_hz": phase_noise_dbc_per_hz,
             "phase_noise_offset_hz": phase_noise_offset_hz,
             "phase_noise_slope_db_per_decade": phase_noise_slope_db_per_decade,
             "noiseless": noiseless,
-            "gain_db": gain_db,
         })
         # A zero or negative reference offset makes log10(f/f_ref) meaningless
         # and would return inf or nan for every offset rather than failing, so
@@ -389,13 +379,6 @@ class GenericDAC(DACComponent):
         self.phase_noise_offset_hz = phase_noise_offset_hz
         self.phase_noise_slope_db_per_decade = phase_noise_slope_db_per_decade
         self.noiseless = noiseless
-        self.gain_db = gain_db
-
-    def gain(self, carrier_frequency):
-        """Return DAC gain in dB, flat across the band."""
-        if isinstance(carrier_frequency, np.ndarray):
-            return np.full_like(carrier_frequency, self.gain_db)
-        return self.gain_db
 
     def noise(self, carrier_frequency, spectral_frequency):
         """
@@ -430,9 +413,8 @@ class GenericDAC(DACComponent):
                              "-174 dBm/Hz is a 300 K thermal floor; the AD9082 "
                              "datasheet's flat figure is -140."),
               NOISELESS_PARAM,
-              ParamSpec("gain_db", default=0.0, label="Gain", unit="dB",
-                        minimum=-50.0, maximum=50.0, step=0.5),
-          ))
+          ),
+          retired=(RETIRED_CONVERTER_GAIN,))
 class GenericADC(ADCComponent):
     """
     Configurable ADC: one white noise density, flat in carrier and in offset.
@@ -443,11 +425,9 @@ class GenericADC(ADCComponent):
     out by hand - and inventing a frequency dependence for it would be putting
     in structure the number does not carry.
 
-    The density is where the noise stands, not where it was referred from:
-    ``ADCComponent`` refers converter noise to the output plane, so the ADC's
-    own ``gain_db`` is not applied to it. At the default 0 dB there is no
-    difference, and a chain that wants an input-referred floor with gain on the
-    converter should state the floor at the plane it means.
+    The density stands at the ADC input, which is where the analog path ends
+    and the only plane the figure could be quoted at - a converter has no gain
+    to refer it across (see ``ConverterComponent``).
 
     Compare with ``AD9082_ADC``, which derives a carrier-dependent floor from a
     datasheet SNR curve. Its own datasheet also quotes a flat -140 dBm/Hz, which
@@ -456,21 +436,13 @@ class GenericADC(ADCComponent):
     """
 
     def __init__(self, noise_density_dbm_per_hz=-140.0, noiseless=False,
-                 gain_db=0.0, name=None):
+                 name=None):
         super().__init__(name=name, params={
             "noise_density_dbm_per_hz": noise_density_dbm_per_hz,
             "noiseless": noiseless,
-            "gain_db": gain_db,
         })
         self.noise_density_dbm_per_hz = noise_density_dbm_per_hz
         self.noiseless = noiseless
-        self.gain_db = gain_db
-
-    def gain(self, carrier_frequency):
-        """Return ADC gain in dB, flat across the band."""
-        if isinstance(carrier_frequency, np.ndarray):
-            return np.full_like(carrier_frequency, self.gain_db)
-        return self.gain_db
 
     def noise(self, carrier_frequency, spectral_frequency):
         """Return the input noise PSD in W/Hz, white across both axes."""

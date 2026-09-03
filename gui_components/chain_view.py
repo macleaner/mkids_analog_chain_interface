@@ -119,7 +119,7 @@ class ChainView(QWidget):
         from PySide6.QtGui import QFont, QColor
         
         # Create DAC display text and item (at the top)
-        dac_text = f"🔸 {config['model']} DAC (Pcarrier={config['carrier_power_dbm']:.1f} dBm, Gain={config['dac_gain_db']:.1f} dB)"
+        dac_text = f"🔸 {config['model']} DAC (Pcarrier={config['carrier_power_dbm']:.1f} dBm)"
         dac_item = QListWidgetItem(dac_text)
         dac_item.setData(Qt.UserRole, None)  # No actual component object
         dac_item.setData(Qt.UserRole + 1, True)  # Mark as digitizer item
@@ -135,7 +135,7 @@ class ChainView(QWidget):
         self.list_widget.insertItem(0, dac_item)
         
         # Create ADC display text and item (at the bottom)
-        adc_text = f"🔸 {config['model']} ADC (Gain={config['adc_gain_db']:.1f} dB)"
+        adc_text = f"🔸 {config['model']} ADC"
         adc_item = QListWidgetItem(adc_text)
         adc_item.setData(Qt.UserRole, None)  # No actual component object
         adc_item.setData(Qt.UserRole + 1, True)  # Mark as digitizer item
@@ -244,10 +244,8 @@ class ChainView(QWidget):
             self.chain.set_digitizer(
                 registry.create("converter.ad9082_dac", {
                     "carrier_power_dbm": config['carrier_power_dbm'],
-                    "gain_db": config['dac_gain_db'],
                 }, name='AD9082_DAC'),
                 registry.create("converter.ad9082_adc", {
-                    "gain_db": config['adc_gain_db'],
                 }, name='AD9082_ADC'),
             )
 
@@ -270,8 +268,6 @@ class ChainView(QWidget):
             self.digitizer_config = {
                 'model': 'AD9082',
                 'carrier_power_dbm': dac_params.get('carrier_power_dbm', 0.0),
-                'dac_gain_db': dac_params.get('gain_db', 0.0),
-                'adc_gain_db': adc_params.get('gain_db', 0.0),
             }
 
         labels = {index: label for label, index in chain.labels.items()}

@@ -236,13 +236,23 @@ def test_noiseless_converters_contribute_exactly_zero(type_id):
 
 @pytest.mark.parametrize("type_id", ["converter.generic_dac",
                                      "converter.generic_adc"])
-def test_noiseless_still_applies_its_gain(type_id):
-    """Noise-free is not transparent: the gain knob is untouched by the flag."""
+def test_noiseless_removes_the_noise_and_nothing_else(type_id):
+    """
+    Noise-free is not absent: the flag takes the converter out of the budget,
+    but it is still a stage of the chain and still the plane the analog path
+    starts or stops at. A converter has no gain either way, so what has to hold
+    is that a noiseless one is 0 dB like any other rather than dropped.
+    """
     entry = registry.resolve(type_id)
     params = {s.name: s.default for s in entry.params}
-    params.update(noiseless=True, gain_db=-3.5)
+    params.update(noiseless=True)
     ideal = registry.create(type_id, params)
-    assert float(ideal.gain(1.5e9)) == pytest.approx(-3.5)
+    assert float(ideal.gain(1.5e9)) == 0.0
+    assert float(ideal.noise(1.5e9, 1e3)) == 0.0
+
+    noisy = registry.create(type_id, {s.name: s.default for s in entry.params})
+    assert float(noisy.gain(1.5e9)) == float(ideal.gain(1.5e9))
+    assert float(noisy.noise(1.5e9, 1e3)) > 0.0
 
 
 def test_attenuator_is_flat_in_both_axes():

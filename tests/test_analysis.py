@@ -56,13 +56,26 @@ def test_contributions_sum_to_the_total(sample_chain):
     assert set(contributions) == {"AD9082_DAC", "AD9082_ADC", "InputAtten", "LNA"}
 
 
-def test_total_gain_includes_digitizer(sample_chain):
-    before = sample_chain.total_gain(1.5e9)
+def test_installing_a_digitizer_does_not_change_the_gain(sample_chain):
+    """
+    A converter is the boundary of the analog path, not a stage along it, so it
+    contributes 0 dB and installing one leaves the chain's gain alone. It is
+    still *in* the path - the total covers it, and its planes are the ends of
+    the analog chain - which is why this is asserted rather than assumed.
+    """
+    freq = np.linspace(1e8, 3e9, 9)
+    before = np.asarray(sample_chain.total_gain(freq), dtype=float)
     sample_chain.set_digitizer(
-        registry.create("converter.ad9082_dac", {"gain_db": 2.0}),
-        registry.create("converter.ad9082_adc", {"gain_db": 3.0}),
+        registry.create("converter.ad9082_dac", {"carrier_power_dbm": -20.0}),
+        registry.create("converter.ad9082_adc", {}),
     )
-    assert sample_chain.total_gain(1.5e9) == pytest.approx(before + 5.0)
+    assert np.allclose(np.asarray(sample_chain.total_gain(freq), dtype=float),
+                       before, rtol=1e-12)
+    assert len(sample_chain.stages()) == len(sample_chain.components) + 2
+    for converter in (sample_chain.dac, sample_chain.adc):
+        assert float(converter.gain(1.5e9)) == 0.0
+        assert np.all(np.asarray(converter.gain(freq)) == 0.0)
+        assert "gain_db" not in converter.params
 
 
 def test_a_failing_noise_model_is_not_silently_treated_as_noiseless():
@@ -217,6 +230,60 @@ def test_at_is_required_and_validated():
         chain.noise_at_point("LNA", 1.5e9, 1e3)
     with pytest.raises(ValueError, match="must be 'input' or 'output'"):
         chain.noise_at_point("LNA", 1.5e9, 1e3, at="middle")
+
+
+def test_gain_between_the_end_planes_is_the_total():
+    """The plane pair is a generalization of `total_gain`, not a second
+    opinion about it, so the widest span it can name has to agree."""
+    chain = _digitizer_chain()
+    freq = np.linspace(1e8, 3e9, 9)
+    whole = chain.gain_between_planes(0, len(chain.stages()), freq)
+    assert np.allclose(whole, np.asarray(chain.total_gain(freq)), rtol=1e-12)
+    assert chain.gain_between_planes(2, 2, 1.5e9) == 0.0
+
+
+def test_a_plane_span_ignores_a_stage_outside_it_even_when_it_answers_nan():
+    """
+    The span is summed over its own stages rather than differenced from two
+    cumulative gains. That is what keeps a stage outside the span out of the
+    answer - here one that returns NaN, which a difference would spread over
+    every span in the chain regardless of where the stage sits.
+    """
+    from component import Component
+
+    class NanAmp(Component):
+        """A model with no data at this frequency at all."""
+
+        def gain(self, frequency):
+            return np.full_like(np.asarray(frequency, dtype=float), np.nan)
+
+        def noise(self, carrier_frequency, spectral_frequency):
+            return 0.0
+
+    chain = _digitizer_chain()
+    chain.add_component(NanAmp(name="NoData"), label="NoData")
+    stages = chain.stages()
+    assert np.isnan(np.asarray(chain.total_gain(1.5e9))).all()
+
+    # The LNA alone, upstream of the broken stage, still has its own answer.
+    lna = chain.resolve_plane("LNA", "input")[0]
+    alone = chain.gain_between_planes(lna, lna + 1, 1.5e9)
+    assert float(alone) == pytest.approx(float(chain.components[0].gain(1.5e9)))
+    # And a span that does contain it is NaN, which is the honest answer there.
+    assert np.isnan(float(chain.gain_between_planes(0, len(stages), 1.5e9)))
+
+
+def test_a_plane_span_is_validated():
+    """A span that runs backwards is not a gain along the path, and a plane
+    that is not in the chain is a caller's mistake rather than an empty sum."""
+    chain = _digitizer_chain()
+    planes = len(chain.stages())
+    with pytest.raises(ValueError, match="upstream of from_plane"):
+        chain.gain_between_planes(3, 1, 1.5e9)
+    with pytest.raises(IndexError, match="not a plane of this chain"):
+        chain.gain_between_planes(0, planes + 1, 1.5e9)
+    with pytest.raises(IndexError, match="not a plane of this chain"):
+        chain.gain_between_planes(-1, 2, 1.5e9)
 
 
 def test_budget_reports_power_and_temperature():

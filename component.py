@@ -189,12 +189,35 @@ class ActiveComponent(Component):
         super().__init__(name=name, component_type="active", params=params)
 
 
-class DACComponent(Component):
+class ConverterComponent(Component):
+    """
+    Base class for the two components with a digital side.
+
+    A converter is where the analog path ends, not a stage along it. The DAC's
+    output plane is where the analog signal starts and the ADC's input plane is
+    where it stops; on the other side of each there is no analog plane at all,
+    which is why only those two sides are offered as reference planes.
+
+    So a converter has no gain: 0 dB, and not a parameter. A level change at
+    the digital boundary scales the digital signal and says nothing about the
+    analog chain, and real gain at either end is an amplifier or an attenuator,
+    which belongs in the chain as a stage of its own where its noise and its
+    frequency response are accounted for too.
+    """
+
+    def gain(self, carrier_frequency):
+        """0 dB at every carrier - see the class docstring."""
+        if isinstance(carrier_frequency, np.ndarray):
+            return np.zeros_like(carrier_frequency, dtype=float)
+        return 0.0
+
+
+class DACComponent(ConverterComponent):
     """
     Base class for Digital-to-Analog Converter components.
 
-    DAC phase noise is generated at the output and scales with the carrier
-    there, so the DAC's own gain is not applied to it again.
+    DAC phase noise is generated at the output, where the analog path begins,
+    and scales with the carrier level there.
     """
 
     noise_reference = "output"
@@ -203,7 +226,7 @@ class DACComponent(Component):
         super().__init__(name=name, component_type="dac", params=params)
 
 
-class ADCComponent(Component):
+class ADCComponent(ConverterComponent):
     """Base class for Analog-to-Digital Converter components."""
 
     noise_reference = "output"

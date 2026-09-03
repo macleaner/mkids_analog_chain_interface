@@ -483,6 +483,14 @@ def _default_label(type_id: str) -> str:
     return f"{stem}{number}"
 
 
+#: The sides of a converter that are analog planes, by stage kind. Keyed on the
+#: kind `SignalChain.stages` reports, which is `component_type` - so a converter
+#: appended as a component rather than installed as the digitizer is treated the
+#: same way, which is right: what makes one side unavailable is the digital
+#: boundary, not where the chain keeps the object.
+_CONVERTER_PLANE_SIDES = {"dac": ("output",), "adc": ("input",)}
+
+
 def _describe() -> Dict[str, Any]:
     """
     The chain as the view needs to draw it: stages in signal order, plus the
@@ -525,7 +533,15 @@ def _describe() -> Dict[str, Any]:
 
     planes = []
     for i, (label, _component, kind) in enumerate(stages):
-        for at in ("input", "output"):
+        # A converter's other side is digital. The DAC's output plane is where
+        # the analog path starts and the ADC's input plane is where it ends, so
+        # those are the only sides of either that a gain or a budget can be
+        # read at, and the only ones offered. The planes beyond them still
+        # exist in `SignalChain`'s numbering - "chain output" is the one after
+        # the ADC - and with no converter gain they carry the same numbers as
+        # the analog ones; they are simply not somewhere a measurement is.
+        sides = _CONVERTER_PLANE_SIDES.get(kind, ("input", "output"))
+        for at in sides:
             planes.append({"reference": label, "at": at, "kind": kind,
                            "display": f"{label} ({at})", "stage_index": i})
 
@@ -884,7 +900,9 @@ def _outside_span(span: tuple, start: float, stop: float) -> List[tuple]:
     return regions
 
 
-def _extrapolated_stages(start: float, stop: float) -> List[Dict[str, Any]]:
+def _extrapolated_stages(start: float, stop: float, from_plane: int = 0,
+                         to_plane: Optional[int] = None
+                         ) -> List[Dict[str, Any]]:
     """
     The stages whose datasheet does not cover all of a sweep, and where.
 
@@ -897,9 +915,19 @@ def _extrapolated_stages(start: float, stop: float) -> List[Dict[str, Any]]:
     The band comes from the model (see :func:`_defined_span`), so a stage
     appears here for the same reason its gain is an estimate there and cannot
     disagree with it.
+
+    ``from_plane``/``to_plane`` restrict the report to the stages between two
+    planes, which is the span the gain was summed over. A stage outside that
+    span is not in that curve at all, so flagging it would shade a region of a
+    plot the stage had no part in drawing. ``stage_index`` is the stage's index
+    in the whole chain either way, matching :func:`describe`.
     """
+    stages = _CHAIN.stages()
+    if to_plane is None:
+        to_plane = len(stages)
     out = []
-    for index, (label, component, kind) in enumerate(_CHAIN.stages()):
+    for index in range(from_plane, to_plane):
+        label, component, kind = stages[index]
         span = _defined_span(component)
         if span is None:
             continue                        # answers everywhere; nothing to flag
@@ -918,28 +946,75 @@ def _extrapolated_stages(start: float, stop: float) -> List[Dict[str, Any]]:
     return out
 
 
+def _gain_plane(reference: Any, at: str, open_plane: int,
+                open_label: str) -> tuple:
+    """
+    One end of a gain sweep, as ``(plane_index, description)``.
+
+    A ``reference`` of None is the open end of the chain - the input before the
+    DAC, or the output after the ADC, depending on which end is being named.
+    Those are planes but not stages, so they cannot be reached through
+    :meth:`SignalChain.resolve_plane` and are supplied by the caller instead.
+    """
+    if reference is None:
+        return open_plane, open_label
+    return _CHAIN.resolve_plane(reference, at)
+
+
 @_guard
 def sweep_gain(start_hz: float, stop_hz: float, n: int = 401,
-               log: bool = False) -> Dict[str, Any]:
+               log: bool = False,
+               from_reference: Any = None, from_at: str = "input",
+               to_reference: Any = None, to_at: str = "output"
+               ) -> Dict[str, Any]:
     """
-    Total chain gain in dB over a carrier-frequency sweep.
+    Chain gain in dB between two planes, over a carrier-frequency sweep.
 
-    ``extrapolated`` lists the stages that are outside their datasheet somewhere
-    in this sweep. They answer there rather than returning NaN - a NaN in a dB
-    sum would take the whole curve with it - so the gain is continuous and
-    nothing in it shows where the measurements stopped. This is that, said
-    separately: the numbers over those regions are indications, not
-    specifications. An empty list is a positive statement that every stage
-    covers the whole sweep.
+    ``from_reference``/``from_at`` and ``to_reference``/``to_at`` name the two
+    planes exactly as :func:`budget` names its one, so ``"LNA", "input"`` is the
+    same plane here as there. Left as None each is the open end of the chain -
+    the input before the DAC and the output after the ADC - so the default is
+    the whole path and equals ``SignalChain.total_gain``, while naming one stage
+    at both ends gives that stage on its own.
+
+    Only the stages between the two planes are summed, so a shorter span is not
+    the total with something subtracted off: a stage outside it contributes
+    nothing to the curve and nothing to ``extrapolated`` either. That is the
+    point of naming a pair - the DAC to the LNA input is unshaded even when the
+    amplifiers further along the chain run out of datasheet over the sweep.
+
+    ``extrapolated`` lists the stages inside the span that are outside their
+    datasheet somewhere in this sweep. They answer there rather than returning
+    NaN - a NaN in a dB sum would take the whole curve with it - so the gain is
+    continuous and nothing in it shows where the measurements stopped. This is
+    that, said separately: the numbers over those regions are indications, not
+    specifications. An empty list is a positive statement that every stage in
+    the span covers the whole sweep.
+
+    ``stage_labels`` names the stages that were summed, in signal order. It is
+    what makes the curve checkable: an empty list means the two planes are the
+    same plane, and a flat 0 dB is the honest answer rather than a broken one.
     """
     start, stop = float(start_hz), float(stop_hz)
     freq = _grid(start, stop, n, bool(log))
-    gain = np.asarray(_CHAIN.total_gain(freq), dtype=float)
+    stages = _CHAIN.stages()
+    from_plane, from_label = _gain_plane(from_reference, from_at,
+                                         0, "chain input")
+    to_plane, to_label = _gain_plane(to_reference, to_at,
+                                     len(stages), "chain output")
+    gain = np.asarray(_CHAIN.gain_between_planes(from_plane, to_plane, freq,
+                                                 stages=stages), dtype=float)
     if gain.ndim == 0:
         gain = np.full_like(freq, float(gain))
     return {"freq_hz": _arr(freq), "gain_db": _arr(gain),
             "min_db": _num(np.nanmin(gain)), "max_db": _num(np.nanmax(gain)),
-            "extrapolated": _extrapolated_stages(start, stop)}
+            "from_plane": from_plane, "to_plane": to_plane,
+            "from_label": from_label, "to_label": to_label,
+            "n_stages": len(stages),
+            "stage_labels": [label for label, _c, _k
+                             in stages[from_plane:to_plane]],
+            "extrapolated": _extrapolated_stages(start, stop,
+                                                 from_plane, to_plane)}
 
 
 @_guard
@@ -1081,10 +1156,21 @@ def _generated_by() -> str:
 
 @_guard
 def from_json(text: str) -> Dict[str, Any]:
-    """Replace the current chain with one parsed from a chain file."""
+    """
+    Replace the current chain with one parsed from a chain file.
+
+    ``load_warnings`` is everything the file did not fully specify, verbatim
+    from :attr:`SignalChain.load_warnings`. It is reported here rather than
+    left on the chain because this is the only moment a view can show it: a
+    parameter that was defaulted in, or a converter that could not be rebuilt,
+    is invisible in the chain that comes back. A file that loads perfectly
+    gives an empty list, which is the positive statement.
+    """
     global _CHAIN
     _CHAIN = SignalChain.from_dict(json.loads(text))
-    return _describe()
+    result = _describe()
+    result["load_warnings"] = list(_CHAIN.load_warnings)
+    return result
 
 
 @_guard

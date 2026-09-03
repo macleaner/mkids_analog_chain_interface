@@ -259,10 +259,57 @@ class SignalChain:
 
         Plane 0 is the chain input, so its cumulative gain is zero.
         """
+        return self.gain_between_planes(0, plane, carrier_frequency,
+                                        stages=stages)
+
+    def gain_between_planes(self, from_plane, to_plane, frequency,
+                            stages=None):
+        """
+        Gain in dB between two planes, along the signal path.
+
+        Planes are numbered as :meth:`stages` describes them: plane *k* sits
+        immediately before stage *k*, so plane 0 is the chain input and plane
+        ``len(stages)`` the chain output. Plane 0 to the last plane is therefore
+        :meth:`total_gain`, and any plane to itself is 0 dB.
+
+        Only the stages between the two planes are evaluated. That is the
+        definition rather than an optimisation: a stage outside the span does
+        not act on a signal crossing it, and taking the difference of two
+        cumulative gains would let a stage outside the span - one whose model
+        returns NaN at this frequency, say - decide an answer it has no part in.
+
+        Parameters
+        ----------
+        from_plane, to_plane : int
+            Plane indices, each in ``0..len(stages)``. ``to_plane`` may not be
+            upstream of ``from_plane``: this is the gain a signal picks up
+            travelling from one plane to the other, and the reverse is a
+            de-embedding, which is a different question.
+        frequency : float or np.ndarray
+            Carrier frequency in Hz.
+        stages : list, optional
+            A precomputed :meth:`stages` result, so a caller making several
+            calls need not rebuild it.
+
+        Returns
+        -------
+        float or np.ndarray
+            Gain in dB (negative indicates net loss).
+        """
         stages = stages if stages is not None else self.stages()
+        for name, plane in (("from_plane", from_plane), ("to_plane", to_plane)):
+            if not 0 <= plane <= len(stages):
+                raise IndexError(
+                    f"{name} {plane} is not a plane of this chain: "
+                    f"{len(stages)} stages means planes 0..{len(stages)}")
+        if to_plane < from_plane:
+            raise ValueError(
+                f"to_plane ({to_plane}) is upstream of from_plane "
+                f"({from_plane}); gain is accumulated along the signal path")
+
         total = 0.0
-        for _, component, _ in stages[:plane]:
-            total = total + component.gain(carrier_frequency)
+        for _, component, _ in stages[from_plane:to_plane]:
+            total = total + component.gain(frequency)
         return total
 
     def _source_plane(self, stage_index, component):
@@ -513,39 +560,56 @@ class SignalChain:
             dac_data, adc_data = digitizer.get("dac"), digitizer.get("adc")
             dac = adc = None
             if dac_data:
-                try:
-                    dac = registry.create(dac_data["type"], dac_data.get("params"),
-                                          warnings=warnings)
-                except (KeyError, ValueError, TypeError) as exc:
-                    warnings.append(f"could not load DAC: {exc}")
+                dac = self._create_converter(
+                    "DAC", dac_data["type"], dac_data.get("params"), warnings)
             if adc_data:
-                try:
-                    adc = registry.create(adc_data["type"], adc_data.get("params"),
-                                          warnings=warnings)
-                except (KeyError, ValueError, TypeError) as exc:
-                    warnings.append(f"could not load ADC: {exc}")
+                adc = self._create_converter(
+                    "ADC", adc_data["type"], adc_data.get("params"), warnings)
             if dac is not None or adc is not None:
                 self.set_digitizer(dac, adc)
             return
 
         # Legacy GUI format: a flat config dict from the digitizer panel.
         if digitizer.get("model") == "AD9082":
-            try:
-                self.set_digitizer(
-                    registry.create("converter.ad9082_dac", {
-                        "carrier_power_dbm": digitizer.get("carrier_power_dbm", 0.0),
-                        "gain_db": digitizer.get("dac_gain_db", 0.0),
-                    }, warnings=warnings),
-                    registry.create("converter.ad9082_adc", {
-                        "gain_db": digitizer.get("adc_gain_db", 0.0),
-                    }, warnings=warnings),
-                )
-            except (KeyError, ValueError, TypeError) as exc:
-                warnings.append(f"could not load legacy digitizer config: {exc}")
+            dac_params = {
+                "carrier_power_dbm": digitizer.get("carrier_power_dbm", 0.0)}
+            adc_params: Dict[str, Any] = {}
+            # This format's converter gains, which a converter no longer has.
+            # Passed through under the retired name only when the file states
+            # one, so that `registry.create` decides what becomes of it - a
+            # legacy file recording real converter gain must not load here as
+            # though it had recorded none.
+            for key, params in (("dac_gain_db", dac_params),
+                                ("adc_gain_db", adc_params)):
+                if key in digitizer:
+                    params["gain_db"] = digitizer[key]
+            dac = self._create_converter(
+                "DAC", "converter.ad9082_dac", dac_params, warnings)
+            adc = self._create_converter(
+                "ADC", "converter.ad9082_adc", adc_params, warnings)
+            if dac is not None or adc is not None:
+                self.set_digitizer(dac, adc)
         else:
             warnings.append(
                 f"unrecognized legacy digitizer model "
                 f"{digitizer.get('model')!r}; digitizer not restored")
+
+    @staticmethod
+    def _create_converter(role: str, type_id: str,
+                          params: Optional[Dict[str, Any]],
+                          warnings: List[str]):
+        """
+        Build one converter for a load, or report why it could not be built.
+
+        Returns None on failure, having recorded it - so a file whose ADC
+        cannot be rebuilt still loads with its DAC and its components, and the
+        one thing that went wrong is named rather than the whole load failing.
+        """
+        try:
+            return registry.create(type_id, params, warnings=warnings)
+        except (KeyError, ValueError, TypeError) as exc:
+            warnings.append(f"could not load {role}: {exc}")
+            return None
 
     def save(self, path: str) -> None:
         """Write the chain to ``path`` as JSON."""

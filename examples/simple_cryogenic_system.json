@@ -9,16 +9,13 @@
       "type": "converter.ad9082_dac",
       "name": "AD9082_DAC",
       "params": {
-        "carrier_power_dbm": -10.0,
-        "gain_db": 0.0
+        "carrier_power_dbm": -10.0
       }
     },
     "adc": {
       "type": "converter.ad9082_adc",
       "name": "AD9082_ADC",
-      "params": {
-        "gain_db": 0.0
-      }
+      "params": {}
     }
   },
   "components": [

@@ -38,7 +38,6 @@ NON_DEFAULT = {
     "temperature": 77.0,
     "attenuation": -13.5,
     "carrier_power_dbm": -22.5,
-    "gain_db": 3.25,
     "phase_noise_dbc_per_hz": -97.5,
     "phase_noise_offset_hz": 1000.0,
     "phase_noise_slope_db_per_decade": -20.0,
@@ -95,7 +94,7 @@ def test_serialized_params_match_declared_params(type_id):
 def test_chain_round_trips_through_a_file(tmp_path, sample_chain):
     """A chain survives save/load with its metadata, labels and digitizer."""
     dac = registry.create("converter.ad9082_dac", {"carrier_power_dbm": -25.0})
-    adc = registry.create("converter.ad9082_adc", {"gain_db": 0.0})
+    adc = registry.create("converter.ad9082_adc", {})
     sample_chain.set_digitizer(dac, adc)
     sample_chain.description = "Cooldown 2026-08, feedline A"
     sample_chain.metadata = {"cooldown": "CD-17", "dataset": "/data/cd17/noise.h5"}
@@ -158,30 +157,165 @@ def test_loads_legacy_bare_list_format(tmp_path):
     assert chain.total_gain(1.5e9) == pytest.approx(20.0)
 
 
-def test_loads_legacy_flat_digitizer_format(tmp_path):
-    """The intermediate format stored a flat digitizer-panel config dict."""
-    legacy = {
-        "digitizer": {"model": "AD9082", "carrier_power_dbm": -30.0,
-                      "dac_gain_db": 1.0, "adc_gain_db": 2.0},
+def _legacy_digitizer_file(tmp_path, name, digitizer):
+    path = tmp_path / name
+    path.write_text(json.dumps({
+        "digitizer": digitizer,
         "components": [
             {"class": "Attenuator", "description": "Atten",
              "parameters": {"attenuation": -10, "temperature": 300}},
         ],
-    }
-    path = tmp_path / "legacy2.json"
-    path.write_text(json.dumps(legacy))
+    }))
+    return str(path)
 
-    chain = SignalChain.load(str(path))
+
+def test_loads_legacy_flat_digitizer_format(tmp_path):
+    """The intermediate format stored a flat digitizer-panel config dict."""
+    chain = SignalChain.load(_legacy_digitizer_file(
+        tmp_path, "legacy2.json",
+        {"model": "AD9082", "carrier_power_dbm": -30.0,
+         "dac_gain_db": 0.0, "adc_gain_db": 0.0}))
+
     assert chain.dac is not None and chain.adc is not None
     assert chain.dac.params["carrier_power_dbm"] == -30.0
-    assert chain.dac.params["gain_db"] == 1.0
-    assert chain.adc.params["gain_db"] == 2.0
+    # The gains that format recorded are gone from the model, so they are gone
+    # from what was rebuilt - and said out loud rather than dropped quietly.
+    assert "gain_db" not in chain.dac.params
+    assert "gain_db" not in chain.adc.params
+    assert sum("gain_db" in w for w in chain.load_warnings) == 2
+
+
+def test_a_legacy_file_with_real_converter_gain_is_refused(tmp_path):
+    """
+    1 dB of DAC gain is a statement about hardware that this model cannot
+    express any more. Rebuilding the converter without it would hand back a
+    chain 1 dB quieter than the file describes with nothing marking it, so that
+    converter is not rebuilt at all and the reason is recorded.
+
+    The rest of the file still loads. A refused converter must not cost the
+    user the components they can still see and fix.
+    """
+    chain = SignalChain.load(_legacy_digitizer_file(
+        tmp_path, "legacy3.json",
+        {"model": "AD9082", "carrier_power_dbm": -30.0,
+         "dac_gain_db": 1.0, "adc_gain_db": 0.0}))
+
+    assert chain.dac is None
+    assert chain.adc is not None            # its own gain was 0, so it loads
+    assert len(chain.components) == 1
+    assert any("could not load DAC" in w and "1.0" in w
+               for w in chain.load_warnings), chain.load_warnings
 
 
 def test_class_names_still_resolve_as_aliases():
     """Old files reference Python class names; those must remain valid ids."""
     assert registry.resolve("SMA_SS086_cryo").type_id == "cable.sma_ss086_cryo"
     assert registry.resolve("Attenuator").type_id == "attenuator"
+
+
+# ----------------------------------------------------------------------
+# Retired parameters
+# ----------------------------------------------------------------------
+# `aliases` keeps a renamed class loadable; `retired` does the same job for a
+# removed parameter. Every converter used to declare `gain_db`, so every chain
+# file saved before it went records it - the case these pin.
+
+RETIRED_CONVERTERS = ["converter.ad9082_dac", "converter.ad9082_adc",
+                      "converter.generic_dac", "converter.generic_adc"]
+
+
+@pytest.mark.parametrize("type_id", RETIRED_CONVERTERS)
+def test_a_retired_parameter_loads_at_its_old_default_with_a_warning(type_id):
+    """
+    A file recording the value the parameter used to default to describes the
+    component the model still builds, so it loads - but the name is gone, and a
+    format whose worst failure is silent substitution says so.
+    """
+    entry = registry.resolve(type_id)
+    params = {s.name: s.default for s in entry.params}
+    warnings = []
+    component = registry.create(type_id, {**params, "gain_db": 0.0},
+                                warnings=warnings)
+    assert "gain_db" not in component.params
+    assert not hasattr(component, "gain_db")
+    assert any("gain_db" in w and "no longer exists" in w for w in warnings)
+
+
+@pytest.mark.parametrize("type_id", RETIRED_CONVERTERS)
+def test_a_retired_parameter_with_a_real_value_is_refused(type_id):
+    """
+    3 dB of converter gain says something about hardware the model can no
+    longer express. Loading it as 0 dB would hand back a chain 3 dB quieter
+    than the file describes with nothing marking it, which is the substitution
+    this format exists to prevent - so it is refused, and the message says
+    where the gain should go instead.
+    """
+    entry = registry.resolve(type_id)
+    params = {s.name: s.default for s in entry.params}
+    with pytest.raises(ValueError, match="no longer exists"):
+        registry.create(type_id, {**params, "gain_db": 3.0})
+
+
+@pytest.mark.parametrize("type_id", RETIRED_CONVERTERS)
+def test_a_retired_parameter_is_not_offered_as_a_parameter(type_id):
+    """
+    Accepted from a file is not the same as declared. A retired name must not
+    reach a view, or the GUI would build an input for a knob that does not
+    exist, and `to_dict` must not write it back out.
+    """
+    entry = registry.resolve(type_id)
+    assert "gain_db" not in {spec.name for spec in entry.params}
+    assert "gain_db" in {spec.name for spec in entry.retired}
+    component = registry.create(type_id,
+                                {s.name: s.default for s in entry.params})
+    assert "gain_db" not in component.to_dict()["params"]
+
+
+def test_a_saved_file_that_records_converter_gain_still_loads(tmp_path):
+    """
+    The realistic case: a chain saved while converters had a gain knob, at the
+    0 dB it defaulted to. The whole file has to come back - components, labels
+    and both converters - with the retired name noted and nothing else changed.
+    """
+    data = {
+        "format_version": FORMAT_VERSION,
+        "name": "Saved earlier",
+        "components": [{"type": "attenuator", "name": "InputAtten",
+                        "params": {"attenuation": -10.0,
+                                   "temperature": 300.0}}],
+        "labels": {"InputAtten": 0},
+        "digitizer": {
+            "dac": {"type": "converter.ad9082_dac", "name": "AD9082_DAC",
+                    "params": {"carrier_power_dbm": -10.0, "gain_db": 0.0}},
+            "adc": {"type": "converter.ad9082_adc", "name": "AD9082_ADC",
+                    "params": {"gain_db": 0.0}},
+        },
+    }
+    path = tmp_path / "with_converter_gain.json"
+    path.write_text(json.dumps(data))
+
+    chain = SignalChain.load(str(path))
+    assert chain.dac is not None and chain.adc is not None
+    assert chain.dac.params == {"carrier_power_dbm": -10.0}
+    assert chain.total_gain(1.5e9) == pytest.approx(-10.0)
+    assert sum("gain_db" in w for w in chain.load_warnings) == 2
+
+    # Saving it again writes the current format, so the warning is not sticky.
+    again = tmp_path / "resaved.json"
+    chain.save(str(again))
+    assert SignalChain.load(str(again)).load_warnings == []
+
+
+def test_a_name_cannot_be_declared_and_retired_at_once():
+    """A parameter that is both would be read by whichever check ran first."""
+    from registry import ParamSpec, RetiredParam, register
+
+    with pytest.raises(ValueError, match="both a parameter and a retired one"):
+        @register("test.clashing_retired", category="Test",
+                  params=(ParamSpec("gain_db", default=0.0),),
+                  retired=(RetiredParam("gain_db", 0.0),))
+        class _Clashing:
+            pass
 
 
 # ----------------------------------------------------------------------
@@ -232,8 +366,7 @@ def test_a_boolean_parameter_reads_as_what_the_file_says(written, expected):
     record instead of perturbing it, so the accepted spellings are pinned.
     """
     component = registry.create("converter.generic_adc", {
-        "noise_density_dbm_per_hz": -140.0, "noiseless": written,
-        "gain_db": 0.0})
+        "noise_density_dbm_per_hz": -140.0, "noiseless": written})
     assert component.params["noiseless"] is expected
 
 
@@ -246,8 +379,7 @@ def test_a_boolean_parameter_refuses_anything_it_cannot_read(written):
     """
     with pytest.raises(ValueError, match="expects bool"):
         registry.create("converter.generic_adc", {
-            "noise_density_dbm_per_hz": -140.0, "noiseless": written,
-            "gain_db": 0.0})
+            "noise_density_dbm_per_hz": -140.0, "noiseless": written})
 
 
 def test_a_split_parameter_group_is_refused_at_registration():

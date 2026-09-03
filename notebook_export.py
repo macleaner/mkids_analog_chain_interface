@@ -457,9 +457,11 @@ for i, (label, component, kind) in enumerate(chain.stages()):
 ## 3. Gain
 
 `total_gain` covers the whole path including the converters; `gain_between`
-takes any two points, addressed by label or index. Every model broadcasts over
+takes any two components, addressed by label or index; and `gain_between_planes`
+takes the plane pair the GUI's **from plane** / **to plane** selects name,
+summing only the stages that lie between them. Every model broadcasts over
 numpy arrays, so the sweep is one call — this is the GUI's **total gain vs
-carrier frequency** plot, shaded lanes included.
+carrier frequency** plot with both selects left alone, shaded lanes included.
 
 A stage tabulated over a narrower band than the sweep answers outside it by
 extending its measured curve, so the total has no gaps and nothing in the

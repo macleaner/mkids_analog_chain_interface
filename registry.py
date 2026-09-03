@@ -122,6 +122,32 @@ class ParamSpec:
 
 
 @dataclass(frozen=True)
+class RetiredParam:
+    """
+    A parameter a component used to declare and no longer has.
+
+    Deleting the name outright would make every file that recorded it fail to
+    load, and accepting it silently would rebuild a component that differs from
+    the one the file describes - the quiet substitution this format exists to
+    prevent. So a retired name stays declared here and is handled explicitly:
+
+    * a file recording the value the parameter used to default to loads, with a
+      warning that the name is gone. Nothing about the component changes, since
+      that value is what it now does unconditionally.
+    * a file recording anything else is refused. That value said something
+      about the hardware which the model can no longer express, and loading it
+      as though it had said the default is exactly the failure above.
+
+    ``reason`` is shown in both messages, so the file's author is told why the
+    parameter went rather than only that it did.
+    """
+
+    name: str
+    was_default: Any
+    reason: str = ""
+
+
+@dataclass(frozen=True)
 class RegistryEntry:
     """A registered component class plus its presentation metadata."""
 
@@ -132,6 +158,10 @@ class RegistryEntry:
     params: Tuple[ParamSpec, ...] = ()
     aliases: Tuple[str, ...] = ()
     doc: str = ""
+    #: Parameters this component once declared. Accepted from a file at their
+    #: old default and refused otherwise; never offered to a view, since they
+    #: are not parameters any more. See :class:`RetiredParam`.
+    retired: Tuple[RetiredParam, ...] = ()
 
     def param(self, name: str) -> ParamSpec:
         for spec in self.params:
@@ -201,19 +231,29 @@ def _check_groups(type_id: str, params: Tuple[ParamSpec, ...]) -> None:
 
 def register(type_id: str, *, category: str, label: Optional[str] = None,
              params: Tuple[ParamSpec, ...] = (),
-             aliases: Tuple[str, ...] = ()) -> Callable[[type], type]:
+             aliases: Tuple[str, ...] = (),
+             retired: Tuple[RetiredParam, ...] = ()
+             ) -> Callable[[type], type]:
     """
     Class decorator registering a component under a stable ``type_id``.
 
     ``aliases`` should include any previously-used identifier - in particular the
     original Python class name - so chain files written before the registry
-    existed still load.
+    existed still load. ``retired`` does the same job for a parameter that has
+    been removed rather than a class that has been renamed; see
+    :class:`RetiredParam`.
     """
 
     def decorator(cls: type) -> type:
         if type_id in _ENTRIES:
             raise ValueError(f"duplicate component type_id {type_id!r}")
         _check_groups(type_id, tuple(params))
+        declared_names = {spec.name for spec in params}
+        clashing = sorted(declared_names & {spec.name for spec in retired})
+        if clashing:
+            raise ValueError(
+                f"{type_id} declares {clashing} as both a parameter and a "
+                f"retired one; a name is one or the other")
 
         # Always accept the Python class name, so pre-registry files still load.
         all_aliases = tuple(dict.fromkeys((cls.__name__,) + tuple(aliases)))
@@ -226,6 +266,7 @@ def register(type_id: str, *, category: str, label: Optional[str] = None,
             params=tuple(params),
             aliases=all_aliases,
             doc=(cls.__doc__ or "").strip(),
+            retired=tuple(retired),
         )
         _ENTRIES[type_id] = entry
         for alias in all_aliases:
@@ -274,17 +315,40 @@ def create(type_id: str, params: Optional[Dict[str, Any]] = None,
     still load - but the substitution is appended to ``warnings`` so a caller
     can surface it. Silent default substitution was the original format's worst
     failure mode; it must never happen without a trace.
+
+    A *retired* parameter - one the component used to declare - is accepted at
+    its old default with a warning and refused at any other value. See
+    :class:`RetiredParam` for why those are the two outcomes.
     """
     entry = resolve(type_id)
     supplied = dict(params or {})
 
     declared = {spec.name for spec in entry.params}
-    unexpected = set(supplied) - declared
+    retired = {spec.name: spec for spec in entry.retired}
+    unexpected = set(supplied) - declared - set(retired)
     if unexpected:
         raise ValueError(
             f"{entry.type_id} got unexpected parameter(s) "
             f"{sorted(unexpected)}; declared parameters are {sorted(declared)}"
         )
+
+    for retired_name, spec in retired.items():
+        if retired_name not in supplied:
+            continue
+        value = supplied.pop(retired_name)
+        gone = (f"{entry.label}: parameter {retired_name!r} no longer exists"
+                + (f" - {spec.reason}" if spec.reason else ""))
+        if value != spec.was_default:
+            raise ValueError(
+                f"{gone}. The file records {value!r} rather than the "
+                f"{spec.was_default!r} it used to default to, so loading it "
+                f"would drop what that value says about the hardware. Model "
+                f"it as a stage of its own and remove the parameter."
+            )
+        if warnings is not None:
+            warnings.append(f"{gone}; it was {value!r} in the file, which is "
+                            f"what the component now does regardless, so "
+                            f"nothing about it has changed.")
 
     kwargs = {}
     for spec in entry.params:
