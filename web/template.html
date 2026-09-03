@@ -81,6 +81,7 @@ textarea{resize:vertical;line-height:1.45}
 #record .rrow>label{padding-top:4px}
 #record textarea{font-family:var(--mono);font-size:var(--fs2)}
 #record .doc{margin-top:0}
+#record .rfoot{display:flex;justify-content:flex-end;margin-top:9px}
 #top .spacer{flex:1}
 #stamp{font-family:var(--mono);font-size:var(--fs3);color:var(--ink3);text-align:right;line-height:1.4}
 
@@ -323,7 +324,7 @@ tr.dom td{color:var(--accent)}
 
 <div id="top">
   <span class="brand"><b>t0</b>.technology</span>
-  <span id="chainname" title="edit the chain's name, notes and metadata">—</span>
+  <span id="chainname" title="edit the chain's name and notes">—</span>
   <div class="spacer"></div>
   <button id="btnNew">new chain</button>
   <button id="btnUpload">open chain…</button>
@@ -338,14 +339,12 @@ this page's plots and table over it — open it in Jupyter">notebook.ipynb</butt
   <div class="rrow"><label for="recName">name</label>
     <input id="recName"></div>
   <div class="rrow"><label for="recDesc">description</label>
-    <textarea id="recDesc" rows="2"
-      placeholder="what this chain is — a cooldown, a deployment, a measurement run"></textarea></div>
-  <div class="rrow"><label for="recMeta">metadata</label>
-    <textarea id="recMeta" rows="4" spellcheck="false"
-      placeholder='{"cooldown": 12, "sample": "QD-7", "dataset": "/data/run3"}'></textarea></div>
-  <p class="doc">Saved with the chain, and not derivable from the components.
-    <b>metadata</b> is a free-form JSON object — whatever bookkeeping ties this
-    chain to the measurement it describes.</p>
+    <textarea id="recDesc" rows="3"
+      placeholder="what this chain is — which cooldown, whose sample, which dataset"></textarea></div>
+  <p class="doc">Saved with the chain, and not derivable from the components:
+    this is where whatever ties the chain to the measurement it describes gets
+    written down.</p>
+  <div class="rfoot"><button id="recDone" class="primary">go</button></div>
 </div>
 
 <div id="err"></div>
@@ -886,16 +885,17 @@ function renderDigitizer(){
 }
 
 /* ===================== the record =====================
-   The name, notes and metadata are part of the saved file and cannot be
-   recovered from the components, so a chain built here has to be able to carry
-   them. Metadata is edited as JSON rather than as key/value rows because it is
-   stored verbatim: a row editor would turn every value into a string, and a
-   cooldown id silently becoming "12" is the kind of quiet substitution that
-   makes a record stop matching what it documents.                            */
+   The name and the notes are part of the saved file and cannot be recovered
+   from the components, so a chain built here has to be able to carry them.
+
+   The file format also holds a free-form `metadata` object, which this panel
+   does not edit: prose in the description says the same things a cooldown id
+   and a sample name would, in a field nobody has to keep valid JSON. Metadata
+   a loaded file arrived with is preserved untouched by every call here and is
+   there to read under Chain file. */
 function renderRecord(){
   $('recName').value = CHAIN.name;
   $('recDesc').value = CHAIN.description || '';
-  $('recMeta').value = JSON.stringify(CHAIN.metadata || {}, null, 2);
 }
 
 /* ===================== chain view ===================== */
@@ -1821,10 +1821,8 @@ $('btnContrib').onclick = guard(() => {
    panes is settled by the observer below. */
 $('chainname').onclick = () => $('record').classList.toggle('open');
 
-/* Committed on blur like every other field. A rejected name or a description
-   is a single value, so the field is put back to what the chain actually holds
-   - but a rejected metadata edit keeps the text as typed, since re-rendering
-   would throw away a JSON object someone is part way through writing. */
+/* Committed on blur like every other field, and re-rendered either way: a
+   rejected name must not leave the field showing one the chain does not have. */
 $('recName').onchange = guard(() => {
   try { CHAIN = call('set_name', $('recName').value); }
   finally { renderAll(); }
@@ -1833,10 +1831,11 @@ $('recDesc').onchange = guard(() => {
   try { CHAIN = call('set_description', $('recDesc').value); }
   finally { renderAll(); }
 });
-$('recMeta').onchange = guard(() => {
-  CHAIN = call('set_metadata', JSON.parse($('recMeta').value.trim() || '{}'));
-  renderAll();
-});
+
+/* Nothing to commit here - both fields have already gone to Python on the blur
+   this click caused. It closes the panel, which is all a new chain needs to
+   have finished being described. */
+$('recDone').onclick = () => $('record').classList.remove('open');
 
 /* Naming the chain is part of creating it: the name is what the downloaded
    file is called and what identifies it once saved, so it is asked for up
@@ -1849,9 +1848,10 @@ $('btnNew').onclick = guard(() => {
   CHAIN = call('new_chain', name.trim() || 'New Chain');
   selected = null;
   renderAll();
-  // The rest of the record is blank and nothing else will prompt for it, so
-  // open it now, while the chain is being described anyway.
+  // The description is blank and nothing else will ask for it, so the record
+  // opens now, while the chain is being described anyway. `go` closes it.
   $('record').classList.add('open');
+  $('recDesc').focus();
 });
 
 /* Both downloads are text Python produced, so saving one is the same three

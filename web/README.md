@@ -261,18 +261,21 @@ than quoting an invented one. `tests/test_extrapolation.py` holds these rules.
 
 ### The record
 
-Clicking the chain name opens `name`, `description` and `metadata`. None of
-these can be recovered from the components, and all three are in the saved
-file, so a chain built in the page carries the same bookkeeping as one built in
-a notebook — which cooldown, whose sample, which dataset. The panel opens
-itself after **new chain**, since nothing else asks for any of it.
+Clicking the chain name opens `name` and `description`. Neither can be
+recovered from the components, and both are in the saved file, so a chain built
+in the page carries the same bookkeeping as one built in a notebook — which
+cooldown, whose sample, which dataset. The panel opens itself after **new
+chain**, since nothing else asks for the description; **go** closes it.
 
-`metadata` is edited as a JSON object rather than as key/value rows, because it
-is persisted verbatim: a row editor would store every value as a string, and a
-cooldown id quietly becoming `"12"` is exactly how a record stops matching what
-it documents. Text that does not parse is left alone for you to fix, and
-`set_metadata` refuses anything `json.dumps` cannot write — the failure lands
-on the edit that caused it rather than on a download months later.
+The file format also holds a free-form `metadata` object, which this panel does
+not edit. Prose in the description says the same things a cooldown id and a
+sample name would, in a field that cannot be left invalid, and one box beats
+two for the same bookkeeping. Metadata that arrived in a loaded file is
+preserved untouched — nothing in the page writes it — and is there to read
+under **Chain file**. Scripts and notebooks still set it with
+`chain_api.set_metadata`, which refuses anything `json.dumps` cannot write so
+the failure lands on the edit that caused it rather than on a download months
+later.
 
 The name is also what the download is called, so it is sanitized into a
 filename: `Cooldown 12/A` gives `cooldown_12_a.json`, never a path.
