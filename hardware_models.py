@@ -1260,14 +1260,10 @@ class ZN4PD_4R722plus(_DatasheetSpan, PassiveComponent):
     one. A chain that cares about any of those is not a chain this model belongs
     in. Nor is the 30 W rating or the DC-pass path represented.
 
-    Contributes no noise, which follows the cables and filters here rather than
-    the Attenuator - it is the library's convention that a lossy passive is
-    modelled as lossy and not as a thermal source, and diverging for this one
-    part would make a splitter and an equivalent cable behave differently. Worth
-    knowing that the convention costs more here than elsewhere: 6.4 dB is a lot
-    of loss, and a warm 6.4 dB pad ahead of an LNA is worth about 300 K referred
-    to its input. A chain where that matters should carry an explicit Attenuator
-    at the physical temperature alongside this.
+    Contributes no noise: the 6 dB is power division rather than dissipation, so
+    the part is treated as non-lossy. Only the 0.4-1.6 dB of insertion loss
+    above the split is absorbed at all, and no physical temperature is carried
+    here to turn that into a thermal contribution.
 
     Source: component_references/ZN4PD-4R722+_dashboard.pdf, REV. OR,
     ECO-011123.
