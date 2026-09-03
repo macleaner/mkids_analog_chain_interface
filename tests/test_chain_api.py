@@ -675,6 +675,75 @@ def test_a_model_that_answers_everywhere_uses_the_span_it_was_given():
     assert spec["gain_min_db"] == pytest.approx(-10.0)
 
 
+# -------------------------------------------------------- extrapolation flags
+def test_a_sweep_past_the_datasheets_has_a_curve_and_says_which_stages():
+    """
+    The case this exists for: a sweep to 12 GHz of a chain whose amplifiers are
+    tabulated to 3 GHz. Every point has a gain - one NaN in the dB sum used to
+    blank the curve from 3 GHz up - and every stage that ran out of data is
+    named, with the band it does cover and the part of the sweep it does not.
+    """
+    result = chain_api.sweep_gain(1e8, 12e9, 41)
+    assert result["ok"], result.get("error")
+    assert all(gain is not None for gain in result["gain_db"])
+
+    flagged = {stage["label"]: stage for stage in result["extrapolated"]}
+    # The two ZX60s and the ASU LNA stop at 3 GHz; both cryo cables at 10 GHz.
+    # The warm cable (0-18 GHz), the attenuators and the converters cover the
+    # sweep and so are not in the list at all.
+    assert set(flagged) == {"LNA", "WarmAmp1", "WarmAmp2",
+                            "CryoCable", "ReturnCable"}
+    assert flagged["LNA"]["span_to_hz"] == pytest.approx(3e9)
+    assert flagged["LNA"]["regions_hz"] == [[pytest.approx(3e9),
+                                             pytest.approx(12e9)]]
+    assert flagged["CryoCable"]["regions_hz"] == [[pytest.approx(10e9),
+                                                   pytest.approx(12e9)]]
+    # Enough to draw and to name: the model's label, not just an index.
+    assert flagged["LNA"]["type_label"] == "ASU 3 GHz LNA (~6 K)"
+    assert roundtrips(result)
+
+
+def test_nothing_is_flagged_where_every_stage_has_data():
+    """
+    An empty list is a statement, not a missing feature: inside every stage's
+    band the whole curve is measured, and a view that shades nothing there is
+    right to.
+    """
+    assert chain_api.sweep_gain(5e8, 2.5e9, 21)["extrapolated"] == []
+
+
+def test_a_flagged_region_is_cut_at_the_band_edge_not_at_a_sample():
+    """
+    The edge is a datasheet figure; the grid is only where this sweep happened
+    to look. A region reported to the nearest sampled frequency would move when
+    the point count changed, and would shade measured data or leave estimated
+    data unshaded depending on which way it rounded.
+    """
+    coarse = chain_api.sweep_gain(1e8, 12e9, 7)["extrapolated"]
+    fine = chain_api.sweep_gain(1e8, 12e9, 401)["extrapolated"]
+    assert coarse == fine
+    lna = next(s for s in coarse if s["label"] == "LNA")
+    assert lna["regions_hz"][0][0] == pytest.approx(3e9)     # not 2 or 4 GHz
+
+
+def test_a_sweep_below_a_band_is_flagged_at_the_bottom_end():
+    """
+    Both ends, and both at once. The CMT LNA is tabulated from 1 GHz, so a
+    sweep from 100 MHz leaves its band at the bottom - and a sweep that starts
+    below and ends above one band gets two regions for that stage.
+    """
+    assert chain_api.add_component("amplifier.cmt_citcryo1_12d", {}, "CMT")["ok"]
+
+    below = {s["label"]: s for s in
+             chain_api.sweep_gain(1e8, 2e9, 21)["extrapolated"]}
+    assert below["CMT"]["regions_hz"] == [[pytest.approx(1e8), pytest.approx(1e9)]]
+
+    both = {s["label"]: s for s in
+            chain_api.sweep_gain(1e8, 20e9, 21)["extrapolated"]}
+    assert both["CMT"]["regions_hz"] == [[pytest.approx(1e8), pytest.approx(1e9)],
+                                         [pytest.approx(14e9), pytest.approx(20e9)]]
+
+
 def test_a_sloped_model_is_not_reported_as_flat():
     """``gain_flat`` decides how the view quotes a gain, so it has to be the
     model's own answer and not a comparison of two rounded figures."""

@@ -186,18 +186,19 @@ behave another way once added. Two things it decides rather than leaving to the
 view:
 
 * **the band.** The sweep runs over the carrier range the model is valid over,
-  found by asking it. A filter declares that range outright, because it answers
-  with a number everywhere — past the last tabulated point it extends the
-  endpoint slope, clamped so it can neither show gain nor claim rejection deeper
-  than anything measured. A model that instead returns NaN outside its tabulated
-  range is making the same statement the other way, and gets bisected for its
-  edge. Either way the span is the datasheet's: `VLF-6700+` is drawn over
-  50 MHz – 19.89 GHz and `VHF-1320+` over 1 MHz – 3.7 GHz, without either being
-  written down here or any interpolator's knots being read by name. A model that
-  answers everywhere and declares no band — a flat attenuator, a cable built to
-  extrapolate — has none of its own, so the gain plot's span is used instead and
-  the axis says `plot span`, because "0.1–3 GHz" means something different in the
-  two cases.
+  found by asking it. Every model with a tabulated curve declares that range
+  outright, because it answers with a number everywhere — past the last
+  tabulated point it extends the endpoint slope, clamped so it can neither show
+  gain nor claim rejection deeper than anything measured (see
+  [the shaded lanes](#where-the-datasheets-run-out)). A model that instead
+  returns NaN outside its tabulated range is making the same statement the other
+  way, and gets bisected for its edge. Either way the span is the datasheet's:
+  `VLF-6700+` is drawn over 50 MHz – 19.89 GHz and `VHF-1320+` over
+  1 MHz – 3.7 GHz, without either being written down here or any interpolator's
+  knots being read by name. A model that answers everywhere and declares no band
+  — a flat attenuator, a converter — has none of its own, so the gain plot's span
+  is used instead and the axis says `plot span`, because "0.1–3 GHz" means
+  something different in the two cases.
 * **the unit for its noise.** A noise temperature only means anything for a
   source that is white near the carrier, so the model is evaluated across the
   spectral axis: an amplifier or a warm attenuator gets one temperature in K, a
@@ -209,6 +210,53 @@ The carrier and the spectral offset are the budget's, so a spec is read at the
 operating point being worked at. The figures are for the registry defaults,
 which is what a double-click installs; the `at defaults` row says which values
 those were, for the models where it makes a difference.
+
+### Where the datasheets run out
+
+Sweep the gain plot past the narrowest part in the chain and the curve keeps
+going, with a shaded lane over the frequencies where it is an estimate.
+
+Every model with a tabulated curve answers at any carrier frequency: past the
+last measured point it extends the endpoint slope, capped so it can never report
+more gain — or less loss — than the datasheet actually measured. Before, an
+amplifier returned NaN outside its band, and since a chain's total gain is a dB
+sum, one such stage blanked the whole curve from its band edge up. Asking for
+0.1–12 GHz on a chain of 3 GHz amplifiers drew nothing above 3 GHz and gave no
+reason for it.
+
+An estimate that looks identical to a measurement is worse than a gap, so each
+model also states the band it is quoting measured data over
+(`defined_span_hz`), `sweep_gain` reports every stage whose band does not cover
+the sweep, and the plot shades what that leaves:
+
+* **one lane per stage**, stacked to fill the plot, each shaded only across its
+  own out-of-band frequencies. Three lanes are three parts short of data — the
+  question is which stages, not whether — and two stages whose bands end at
+  different frequencies mark different regions of the same curve.
+* **named in the legend**, so the lane says which unit is responsible:
+  `LNA extrapolated · DC–3.00 GHz` is the band it *does* cover. Hovering the row
+  gives the model and the wording; clicking it hides that lane and hands its
+  height to the rest.
+* **nothing shaded is a statement too.** Inside every stage's band the list is
+  empty and the plot shades nothing, so an unmarked curve is measured data
+  rather than an unimplemented check.
+
+The regions are cut at the band edge, not at the nearest swept point, so they do
+not move when the point count does. Which stages and which frequencies are
+Python's answer — `chain_api.sweep_gain(...)["extrapolated"]`, guarded by
+`tests/test_chain_api.py` — and the view only maps them to pixels. The
+[notebook](#taking-it-to-jupyter) draws the same lanes in matplotlib from the
+same `defined_span_hz`, so a figure taken to Jupyter carries the flag with it.
+
+**Treat a shaded region as an indication, not a specification.** An amplifier's
+out-of-band response is set by its matching networks, a real filter's far
+stopband is re-entrant, and coax loss climbs as sqrt(f) — no straight line
+predicts any of them. The cap keeps the estimate from ever flattering a budget,
+which is the most that can honestly be claimed for it. **Noise does not
+extrapolate at all**: a HEMT's noise rises steeply at both band edges and a
+linear extension would understate it, so a carrier outside an amplifier's band
+gets a flagged gain estimate and no noise figure — the budget says `—` rather
+than quoting an invented one. `tests/test_extrapolation.py` holds these rules.
 
 ### The record
 

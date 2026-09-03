@@ -201,17 +201,18 @@ def _defined_span(component) -> Optional[tuple]:
 
     A model that extrapolates past its datasheet answers with a number
     everywhere, so it cannot state its band through NaN and instead declares it
-    outright with ``defined_span_hz`` - the filters do this. Otherwise the model
-    is built with ``bounds_error=False`` and no fill value, so outside its
-    tabulated range it returns NaN, and that NaN *is* the same statement made
-    the other way; bisecting for it is why this reads no interpolator's knots.
+    outright with ``defined_span_hz`` - every model with a tabulated curve does
+    this. Otherwise the model is built with ``bounds_error=False`` and no fill
+    value, so outside its tabulated range it returns NaN, and that NaN *is* the
+    same statement made the other way; bisecting for it is why this reads no
+    interpolator's knots.
 
     Either way the model is the one answering, and no attribute of its datasheet
     storage is touched, so a model that changes how it holds its curve keeps
     working here.
 
     Returns None for a model that answers everywhere and declares no band - a
-    flat attenuator, or a cable built to extrapolate - which has none to show.
+    flat attenuator, or a converter - which has none to show.
     """
     declared = getattr(component, "defined_span_hz", None)
     if declared is not None:
@@ -797,16 +798,80 @@ def _grid(start: float, stop: float, n: int, log: bool) -> np.ndarray:
     return np.linspace(start, stop, n)
 
 
+def _outside_span(span: tuple, start: float, stop: float) -> List[tuple]:
+    """
+    The parts of the sweep ``start..stop`` that fall outside ``span``.
+
+    A band is one interval, so a sweep can leave it at either end and the answer
+    is at most two intervals. They are cut at the band edge itself rather than at
+    the nearest sampled frequency: the edge is a datasheet figure, while the grid
+    is only where this sweep happened to look.
+    """
+    low, high = span
+    regions = []
+    if start < low:
+        regions.append((start, min(low, stop)))
+    if stop > high:
+        regions.append((max(high, start), stop))
+    return regions
+
+
+def _extrapolated_stages(start: float, stop: float) -> List[Dict[str, Any]]:
+    """
+    The stages whose datasheet does not cover all of a sweep, and where.
+
+    Each entry carries the band the stage is tabulated over and the parts of the
+    sweep outside it, so a view can mark them per stage - one shaded region per
+    stage rather than one for the chain, because which part ran out of data is
+    the thing worth knowing, and two stages ending at different frequencies say
+    different things about the same curve.
+
+    The band comes from the model (see :func:`_defined_span`), so a stage
+    appears here for the same reason its gain is an estimate there and cannot
+    disagree with it.
+    """
+    out = []
+    for index, (label, component, kind) in enumerate(_CHAIN.stages()):
+        span = _defined_span(component)
+        if span is None:
+            continue                        # answers everywhere; nothing to flag
+        regions = _outside_span(span, start, stop)
+        if not regions:
+            continue
+        out.append({
+            "stage_index": index,
+            "label": label,
+            "kind": kind,
+            "type_label": _type_label(component),
+            "span_from_hz": _num(span[0]),
+            "span_to_hz": _num(span[1]),
+            "regions_hz": [[_num(low), _num(high)] for low, high in regions],
+        })
+    return out
+
+
 @_guard
 def sweep_gain(start_hz: float, stop_hz: float, n: int = 401,
                log: bool = False) -> Dict[str, Any]:
-    """Total chain gain in dB over a carrier-frequency sweep."""
-    freq = _grid(float(start_hz), float(stop_hz), n, bool(log))
+    """
+    Total chain gain in dB over a carrier-frequency sweep.
+
+    ``extrapolated`` lists the stages that are outside their datasheet somewhere
+    in this sweep. They answer there rather than returning NaN - a NaN in a dB
+    sum would take the whole curve with it - so the gain is continuous and
+    nothing in it shows where the measurements stopped. This is that, said
+    separately: the numbers over those regions are indications, not
+    specifications. An empty list is a positive statement that every stage
+    covers the whole sweep.
+    """
+    start, stop = float(start_hz), float(stop_hz)
+    freq = _grid(start, stop, n, bool(log))
     gain = np.asarray(_CHAIN.total_gain(freq), dtype=float)
     if gain.ndim == 0:
         gain = np.full_like(freq, float(gain))
     return {"freq_hz": _arr(freq), "gain_db": _arr(gain),
-            "min_db": _num(np.nanmin(gain)), "max_db": _num(np.nanmax(gain))}
+            "min_db": _num(np.nanmin(gain)), "max_db": _num(np.nanmax(gain)),
+            "extrapolated": _extrapolated_stages(start, stop)}
 
 
 @_guard

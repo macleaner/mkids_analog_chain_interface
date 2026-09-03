@@ -459,7 +459,15 @@ for i, (label, component, kind) in enumerate(chain.stages()):
 `total_gain` covers the whole path including the converters; `gain_between`
 takes any two points, addressed by label or index. Every model broadcasts over
 numpy arrays, so the sweep is one call — this is the GUI's **total gain vs
-carrier frequency** plot.
+carrier frequency** plot, shaded lanes included.
+
+A stage tabulated over a narrower band than the sweep answers outside it by
+extending its measured curve, so the total has no gaps and nothing in the
+numbers marks where the data stopped. Each stage says where through
+`defined_span_hz`, and the lanes below are that: one per stage, over the
+frequencies where its gain is an extension rather than a measurement. Treat
+those as an indication — an amplifier's out-of-band response is set by its
+matching networks, and no straight line predicts it.
 """))
     cells.append(_code(f"""
 print(f"total gain @ {{CARRIER/1e9:.3f}} GHz: {{chain.total_gain(CARRIER):7.2f}} dB"){span_pair}
@@ -468,13 +476,42 @@ carrier_sweep = np.linspace({_number(gain_span_hz[0])}, {_number(gain_span_hz[1]
 gain_db = np.broadcast_to(np.asarray(chain.total_gain(carrier_sweep), dtype=float),
                           carrier_sweep.shape)
 
+# The stages that are outside their datasheet somewhere in this sweep, with the
+# part of it that is: the same two intervals per stage chain_api.sweep_gain
+# reports to the GUI, computed here from the models themselves.
+sweep_span = (carrier_sweep[0], carrier_sweep[-1])
+extrapolated = []
+for label, component, _kind in chain.stages():
+    span = getattr(component, "defined_span_hz", None)
+    if span is None:
+        continue                     # answers everywhere; nothing to flag
+    low, high = span()
+    regions = ([(sweep_span[0], min(low, sweep_span[1]))] if sweep_span[0] < low else [])
+    if sweep_span[1] > high:
+        regions.append((max(high, sweep_span[0]), sweep_span[1]))
+    if regions:
+        extrapolated.append((label, (low, high), regions))
+
 fig, ax = plt.subplots()
-ax.plot(carrier_sweep / 1e9, gain_db, color="#d9a441", lw=1.6)
+# One lane per flagged stage, stacked to fill the axes, in axes coordinates so
+# they stay put whatever the gain range turns out to be.
+for i, (label, (low, high), regions) in enumerate(extrapolated):
+    lane = 1.0 / len(extrapolated)
+    for j, (start, stop) in enumerate(regions):
+        ax.axvspan(start / 1e9, stop / 1e9, ymin=i * lane, ymax=(i + 1) * lane,
+                   color=f"C{{i}}", alpha=0.2, lw=0,
+                   label=f"{{label}} extrapolated (datasheet "
+                         f"{{low/1e9:g}}-{{high/1e9:g}} GHz)" if j == 0 else None)
+ax.plot(carrier_sweep / 1e9, gain_db, color="#d9a441", lw=1.6, zorder=3)
 ax.set_xlabel("carrier frequency (GHz)")
 ax.set_ylabel("total gain (dB)")
 ax.set_title(f"{{chain.name}} - total gain")
+if extrapolated:
+    ax.legend(fontsize="small", loc="lower left")
 print(f"{{np.nanmin(gain_db):.2f}} dB at {{carrier_sweep[np.nanargmin(gain_db)]/1e9:.3f}} GHz"
       f"  ..  {{np.nanmax(gain_db):.2f}} dB at {{carrier_sweep[np.nanargmax(gain_db)]/1e9:.3f}} GHz")
+for label, (low, high), regions in extrapolated:
+    print(f"  extrapolated: {{label:<14}} datasheet {{low/1e9:g}}-{{high/1e9:g}} GHz")
 plt.show()
 """))
 

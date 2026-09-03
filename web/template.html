@@ -415,7 +415,10 @@ this page's plots and table over it — open it in Jupyter">notebook.ipynb</butt
 
   <div id="plots">
     <div class="plot">
-      <div class="cap">total gain vs carrier frequency</div>
+      <div class="cap" title="A shaded lane marks a stage that is outside its
+datasheet over those frequencies: its gain there is extended from the measured
+curve, not measured. One lane per stage, named in the legend — click one to
+hide it.">total gain vs carrier frequency</div>
       <div class="ctl"><label>span (GHz)</label>
         <span style="display:flex;gap:5px">
           <input id="g0" value="0.1"><input id="g1" value="3.0"></span></div>
@@ -1437,23 +1440,112 @@ function settleLayout(){
   });
 }
 
+/* ===================== extrapolation shading =====================
+   A stage tabulated over a narrower band than the sweep still answers outside
+   it, so the gain curve is continuous and nothing in it shows where the
+   datasheets ran out. Python says which stages those are and over which
+   frequencies (sweep_gain's `extrapolated`); this draws that, and draws only
+   that - no band edge is decided here.
+
+   One lane per flagged stage, stacked to fill the plot, each filled across its
+   own out-of-band frequencies. Lanes rather than one shared region because the
+   question is which stages, not whether: three lanes are three parts short of
+   data, and two stages whose bands end at different frequencies say different
+   things about the same curve. Only shown lanes take height, so hiding one
+   from the legend gives its share back to the rest instead of leaving a hole. */
+const SHADE_ALPHA = 0.20;         // the lane drawn over the plot
+const SWATCH_ALPHA = 0.55;        // the same colour in a 1em legend marker
+
+/* A palette hex as rgba. The lanes overlap the curve and each other, so they
+   have to be translucent, and canvas fills take no separate opacity. */
+function rgba(hex, alpha){
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
+}
+
+/* Drawn in drawClear, which fires before the axes and series, so a lane sits
+   under the curve rather than over it. `bands[i]` is the series at
+   `first + i`: uPlot owns the legend entry and its show/hide, this owns the
+   pixels. */
+function shadePlugin(bands, first){
+  return {hooks: {drawClear: u => {
+    const shown = bands.filter((_band, i) => u.series[first + i].show);
+    if (!shown.length) return;
+    const {left, top, width, height} = u.bbox;
+    const lane = height / shown.length;
+    const ctx = u.ctx;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(left, top, width, height);
+    ctx.clip();                     // a region can start at the axis edge
+    shown.forEach((band, i) => {
+      ctx.fillStyle = rgba(band.color, SHADE_ALPHA);
+      band.regions_hz.forEach(([from, to]) => {
+        const x0 = u.valToPos(from / 1e9, 'x', true);
+        const x1 = u.valToPos(to / 1e9, 'x', true);
+        // At least a pixel: a region narrower than one is still a region.
+        ctx.fillRect(x0, top + i * lane, Math.max(1, x1 - x0), lane);
+      });
+    });
+    ctx.restore();
+  }}};
+}
+
 function renderGain(){
   const start = num($('g0').value) * 1e9, stop = num($('g1').value) * 1e9;
   const result = call('sweep_gain', start, stop, 401, false);
   const ghz = result.freq_hz.map(f => f / 1e9);   // axis label only, not a result
   const data = [ghz, result.gain_db];
+  const series = [{label:'GHz'},
+                  {label:'total gain', stroke:'#d9a441', width:1.6,
+                   value:(u,v)=>v==null?'—':v.toFixed(2)}];
+
+  // Each flagged stage gets a series that draws nothing: it exists for its
+  // legend row, which names the stage and toggles its lane. The data column is
+  // nulls, and it sits on its own scale, so the y axis stays the gain curve's.
+  const bands = (result.extrapolated || []).map((band, i) => ({
+    ...band, color: SERIES_COLORS[(i + 1) % SERIES_COLORS.length]}));
+  const blank = ghz.map(() => null);
+  for (const band of bands){
+    data.push(blank);
+    series.push({
+      label: `${band.label} extrap.`, scale: 'shade',
+      stroke: band.color, fill: rgba(band.color, SWATCH_ALPHA),
+      width: 0, points: {show: false}, paths: () => null,
+      // Kept to a few characters: a legend row is laid out inline, and one long
+      // enough to fill the width takes a line of the plot's height with it.
+      // The model name and the wording go in the row's tooltip instead.
+      value: () => `${fmtHz(band.span_from_hz)}–${fmtHz(band.span_to_hz)}`,
+    });
+  }
+
   const opts = {
     ...plotSize('pgain'),
     padding: [8, 10, 0, 0],
-    scales: {x: {time: false}},
+    scales: {x: {time: false}, shade: {range: [0, 1]}},
     axes: [{...AXIS, label:'carrier (GHz)', labelSize: labelBand('x')},
            {...AXIS, label:'gain (dB)', labelSize: labelBand('y')}],
-    series: [{label:'GHz'},
-             {label:'total gain', stroke:'#d9a441', width:1.6, value:(u,v)=>v==null?'—':v.toFixed(2)}],
+    series,
     legend: {show: true},
+    plugins: bands.length ? [shadePlugin(bands, 2)] : [],
   };
   if (gainPlot){ gainPlot.destroy(); gainPlot = null; }
   gainPlot = new uPlot(opts, data, $('pgain'));
+
+  // What the short legend row leaves out. Rows are found by the label they
+  // were given rather than by counting: whether uPlot emits a row for the x
+  // column depends on its own config, and an off-by-one would put a stage's
+  // explanation on another stage's row.
+  const rows = [...$('pgain').querySelectorAll('.u-legend tr.u-series')];
+  for (const band of bands){
+    const wanted = `${band.label} extrap.`;
+    const row = rows.find(tr => tr.querySelector('th').textContent.trim() === wanted);
+    if (row) row.title =
+      `${band.label} — ${band.type_label}. Its datasheet covers `
+      + `${fmtHz(band.span_from_hz)} to ${fmtHz(band.span_to_hz)}; over the `
+      + `shaded lane its gain is extended from that curve rather than measured. `
+      + `Click to hide the lane.`;
+  }
   settleLayout();
 }
 
