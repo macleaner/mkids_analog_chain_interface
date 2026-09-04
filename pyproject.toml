@@ -16,11 +16,10 @@ Homepage = "https://github.com/t0/analog_chain_interface"
 
 # Explicit module list, which also switches off setuptools' auto-discovery.
 #
-# The physics core plus chain_api, and nothing else: gui_components/ is Qt,
-# diagram_generator imports matplotlib at module scope, chain_builder_gui is an
-# entry point, and analog_chains/ is legacy code importing an absent hidfmux.
-# None of those can be imported under Pyodide, and the browser build needs
-# every module in this wheel to import cleanly.
+# The physics core plus chain_api, and nothing else: diagram_generator imports
+# matplotlib at module scope, and analog_chains/ is legacy code importing an
+# absent hidfmux. Neither can be imported under Pyodide, and the browser build
+# needs every module in this wheel to import cleanly.
 #
 # These are top-level modules rather than a package because that is how the
 # existing code imports them (`import registry`, `from utils import kb`).

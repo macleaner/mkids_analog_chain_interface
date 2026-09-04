@@ -90,9 +90,10 @@ downloaded, and reproducing both of its plots — see
 which is the hand-written version of what **notebook.ipynb** generates.
 
 Component forms are generated from `registry.ParamSpec`, and submitted values
-go back through `ParamSpec.validate`. The browser panel and the Qt panel
-therefore share one declaration of every parameter's range, unit and error
-message.
+go back through `ParamSpec.validate`. Every parameter's range, unit and error
+message is therefore declared once, next to the component, and the page never
+states a constraint of its own — a component added to the registry gets a
+correct form here with no change to the page.
 
 ## Building a chain in the page
 
@@ -525,4 +526,4 @@ version-independent and drop `scipy.optimize` from the runtime path.
   defaulted in, or a converter that could not be rebuilt, is invisible in the
   chain that comes back. But the band times out and the notes are not recorded
   anywhere in the page, so a chain edited for an hour no longer says how it
-  arrived. The Qt GUI's dialog has the same shape of gap.
+  arrived. Carrying them into the chain's record would fix that.

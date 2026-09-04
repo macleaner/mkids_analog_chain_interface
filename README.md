@@ -4,6 +4,7 @@ A Python tool for modeling and analyzing RF analog signal chains, with support f
 
 ## Features
 
+- **Browser GUI**: Build and analyze a chain interactively in a single-file page — no server and no install; see [Browser GUI](#browser-gui)
 - **Component-Based Modeling**: Build signal chains from individual RF components (amplifiers, cables, attenuators, filters, etc.)
 - **Gain Analysis**: Calculate signal gain/loss between any two points in the chain
 - **Noise Analysis**: Compute noise power contributions from each component, referred to any point in the system
@@ -74,7 +75,8 @@ No installation required - the tool is self-contained in the `/home/maclean/code
 
 ### Browser GUI
 
-The quickest way in — no server, no install beyond this repo:
+The interactive front end, and the quickest way in — no server, no install
+beyond this repo:
 
 ```bash
 ./open_web_gui.py
@@ -232,7 +234,8 @@ Properties that matter for bookkeeping:
 - **`label` is a stable handle** for a point in the chain, so an analysis result
   can refer to "noise at the LNA" and still resolve after a reorder.
 - **Anything the file failed to fully specify appears in `chain.load_warnings`**
-  rather than being applied silently. The GUI shows these in a dialog.
+  rather than being applied silently. The browser GUI lists these in the band
+  above its panes when a chain is opened.
 - `format_version` allows migration; `saved_utc` and `metadata` carry provenance.
 
 ## Adding a Component
@@ -260,9 +263,9 @@ class MyCoax(PassiveComponent):
         return flat_in_spectral(kb * 300, spectral_frequency)
 ```
 
-That is all that is needed - the component then appears in the GUI library with
-correct units and ranges, serializes, and is picked up automatically by the
-round-trip and characterization tests.
+That is all that is needed - the component then appears in the browser GUI's
+library with correct units and ranges, serializes, and is picked up
+automatically by the round-trip and characterization tests.
 
 ## Tests
 
@@ -445,9 +448,9 @@ The referred total is **not** a power you could measure at that plane; it is the
 equivalent noise there, which is what an SNR or system noise temperature at that
 plane is built from.
 
-The GUI exposes this as the **Noise Budget** tab, with a units selector and CSV
-export that carries the reference plane, frequencies and referral gains in the
-header.
+The browser GUI exposes this as the **Noise Budget** tab, with a units selector
+and CSV export that carries the reference plane, frequencies and referral gains
+in the header.
 
 #### Why no noise-temperature column
 
@@ -527,12 +530,11 @@ analog_chain_interface/
 
 ## Future Enhancements
 
-- [ ] GUI interface for interactive chain building
-- [ ] Import/export chain configurations (JSON/YAML)
 - [ ] More component models (mixers, switches, circulators)
 - [ ] S-parameter import support
 - [ ] Batch analysis and optimization tools
-- [ ] Web-based interface
+- [ ] Chain diagram drawn in the browser GUI, rather than only in matplotlib
+      from a script or notebook
 
 ## Contributing
 

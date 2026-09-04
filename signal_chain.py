@@ -5,7 +5,7 @@ gain and noise propagation through the chain.
 Also owns serialization: a chain knows how to write itself to, and rebuild
 itself from, a JSON file. Keeping that here rather than in the GUI means a
 saved chain can be loaded from a script or notebook alongside the measurement
-data it describes, and can be tested without Qt.
+data it describes, and can be tested without going through a view at all.
 """
 
 import json

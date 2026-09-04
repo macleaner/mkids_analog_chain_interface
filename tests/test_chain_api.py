@@ -1223,9 +1223,9 @@ def test_a_budget_on_an_empty_chain_is_reported_not_raised():
 
 def test_validation_message_comes_from_the_registry():
     """
-    The browser's form constraints and the Qt panel's are the same ParamSpec,
-    so the rejection message should be the one ParamSpec.validate produces -
-    declared once, in registry.py.
+    The browser's form constraints are a component's own ParamSpec, so the
+    rejection message should be the one ParamSpec.validate produces - declared
+    once, in registry.py, rather than restated by the facade.
     """
     result = chain_api.set_param(0, "attenuation", 500.0)
     spec = registry.resolve("attenuator").param("attenuation")

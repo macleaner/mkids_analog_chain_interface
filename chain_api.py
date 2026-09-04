@@ -117,9 +117,9 @@ def catalog() -> Dict[str, Any]:
     ``unit``/``help`` label it, and ``group`` - where set - is the heading of a
     sub-box the parameter belongs in, shared with the neighbours around it in
     this list. Submitted values should come back through :func:`add_component`
-    or :func:`set_param`, which validate them with the same
-    ``ParamSpec.validate`` the Qt panel uses - so the constraints and the error
-    messages are declared exactly once, in ``registry.py``.
+    or :func:`set_param`, which validate them with the component's own
+    ``ParamSpec.validate`` - so the constraints and the error messages are
+    declared exactly once, in ``registry.py``, and never restated by the view.
 
     Parameter order is the registry's, and a group is guaranteed contiguous in
     it, so a view can render straight down the list and open a box when the

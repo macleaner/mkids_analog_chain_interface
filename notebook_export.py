@@ -200,8 +200,8 @@ def _variant_target(chain) -> Optional[Dict[str, Any]]:
 
     Requires a registry ``type_id`` and a numeric parameter that can be moved
     without leaving its declared range, because the point of the section is
-    that the notebook, the browser and the Qt GUI all validate against the same
-    spec. Returns None for a chain where no such component exists - the section
+    that the notebook and the browser both validate against the same spec.
+    Returns None for a chain where no such component exists - the section
     is then left out rather than emitted with a value that would be rejected.
     """
     labels = _labels_by_index(chain)
