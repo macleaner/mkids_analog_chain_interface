@@ -517,6 +517,7 @@ analog_chain_interface/
 ├── examples/
 │   ├── analog_chain_walkthrough.ipynb   # Guided notebook tour
 │   ├── simple_cryogenic_system.json     # Example chain file
+│   ├── pnnl_5ghz.json                   # Example chain file
 │   └── simple_example.py      # Example script
 ├── web/                       # Browser build (see web/README.md)
 ├── analog_chains/             # Legacy implementations

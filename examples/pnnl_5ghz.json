@@ -1,0 +1,100 @@
+{
+  "format_version": 2,
+  "name": "example PNNL 5GHz",
+  "description": "example analog chain for deploying at PNNL",
+  "metadata": {},
+  "saved_utc": "2026-09-03T16:06:41+00:00",
+  "digitizer": {
+    "dac": {
+      "type": "converter.generic_dac",
+      "name": "GenericDAC",
+      "params": {
+        "carrier_power_dbm": -40.0,
+        "phase_noise_dbc_per_hz": -85.0,
+        "phase_noise_offset_hz": 1.0,
+        "phase_noise_slope_db_per_decade": -10.0,
+        "noiseless": false
+      }
+    },
+    "adc": {
+      "type": "converter.generic_adc",
+      "name": "GenericADC",
+      "params": {
+        "noise_density_dbm_per_hz": -140.0,
+        "noiseless": false
+      }
+    }
+  },
+  "components": [
+    {
+      "type": "cable.rg316",
+      "name": "Cable1",
+      "params": {
+        "length_m": 1.0
+      },
+      "label": "Cable1"
+    },
+    {
+      "type": "splitter.zn4pd_4r722_plus",
+      "name": "Splitter1",
+      "params": {},
+      "label": "Splitter1"
+    },
+    {
+      "type": "filter.vhf5050p",
+      "name": "Filter2",
+      "params": {},
+      "label": "Filter2"
+    },
+    {
+      "type": "filter.vlf6700p",
+      "name": "Filter3",
+      "params": {},
+      "label": "Filter3"
+    },
+    {
+      "type": "cable.fm_f141",
+      "name": "Cable2",
+      "params": {
+        "length_m": 2.0
+      },
+      "label": "Cable2"
+    },
+    {
+      "type": "attenuator",
+      "name": "Attenuator1",
+      "params": {
+        "attenuation": -20.0,
+        "temperature": 1.0
+      },
+      "label": "Attenuator1"
+    },
+    {
+      "type": "attenuator",
+      "name": "Attenuator2",
+      "params": {
+        "attenuation": -20.0,
+        "temperature": 0.1
+      },
+      "label": "Attenuator2"
+    },
+    {
+      "type": "amplifier.lnf_lnc0_3_14b",
+      "name": "Amplifier1",
+      "params": {},
+      "label": "LNA"
+    },
+    {
+      "type": "amplifier.zx60_83ln_s_plus",
+      "name": "Amplifier1",
+      "params": {},
+      "label": "Amplifier1"
+    },
+    {
+      "type": "amplifier.zx60_83ln_s_plus",
+      "name": "Amplifier2",
+      "params": {},
+      "label": "Amplifier2"
+    }
+  ]
+}
