@@ -920,6 +920,58 @@ class FilterLP_VLF6700p(_InterpolatedFilter):
     )
 
 
+@register("filter.vlfg2000p", category="Filters", label="Mini-Circuits VLFG-2000+")
+class FilterLP_VLFG2000p(_InterpolatedFilter):
+    """
+    Mini-Circuits low-pass filter VLFG-2000+
+
+    Passband DC-2000 MHz at 1.1 dB typical, 3 dB cutoff 2350 MHz nominal,
+    unibody SMA, 5.5 W at 25C. Points are the dashboard's temperature-resolved
+    "Typical Performance Data" table, +25C column, which spans 10 MHz to
+    13.5 GHz; outside that the response is extrapolated. As with VLF-6700+ the
+    passband does extend to DC, and the 10-100 MHz slope is nearly flat, so
+    extending it there is a fair estimate - but no point below 10 MHz is
+    published.
+
+    The +25C column is the only one carried. The part is sold as temperature
+    stable and over -55C to +125C it is, but not to the tenth of a dB the table
+    prints: the passband loss at 2 GHz runs 0.73 dB cold and 1.15 dB hot around
+    the 0.92 dB used here, and the skirt moves with it. A chain that needs the
+    hot or cold column needs a temperature parameter this model does not have.
+
+    Two documents are bundled in the dashboard PDF and they disagree in the deep
+    stopband. The REV. A spec sheet's own sparser table reads 54.29 dB at 5 GHz
+    and 44.25 dB at 7.5 GHz where the REV. OR table used here reads 73.67 and
+    52.57; the two agree to about a dB from 9 GHz up and through the skirt. The
+    denser table is taken as it stands rather than reconciled - the region they
+    differ over is 44 dB down at worst, where nothing in a cascade turns on
+    which one is right, and the disagreement is recorded rather than averaged
+    away because a mean of two measurements of different units is neither.
+
+    Source: component_references/VLFG-2000+_dashboard.pdf, performance data
+    REV. OR, 210812; specifications REV. A, ECO-013807.
+    """
+
+    response = (
+        np.asarray([10, 100, 200, 250, 300, 350, 400, 500, 550, 600,
+                    650, 700, 750, 1000, 1500, 1800, 2000, 2100, 2200, 2350,
+                    2400, 2500, 2600, 2660, 2700, 2760, 2800, 2850, 3000, 3100,
+                    3200, 3300, 4000, 4500, 5000, 5400, 5500, 5600, 5700, 5800,
+                    5900, 6000, 6100, 6200, 6300, 6400, 6500, 6600, 6700, 6800,
+                    7000, 7500, 8500, 9000, 10000, 11000, 11500, 12000, 13000,
+                    13500]) * 1e6,
+        np.asarray([-0.10, -0.12, -0.16, -0.17, -0.19, -0.20, -0.22, -0.24,
+                    -0.26, -0.27, -0.28, -0.30, -0.31, -0.38, -0.51, -0.68,
+                    -0.92, -1.08, -1.29, -2.32, -3.30, -7.57, -14.88, -20.23,
+                    -24.14, -30.69, -35.78, -43.52, -50.58, -51.00, -55.22,
+                    -63.10, -64.23, -90.81, -73.67, -69.48, -68.59, -67.41,
+                    -66.79, -66.99, -67.02, -66.28, -63.79, -62.55, -62.24,
+                    -61.12, -60.43, -59.80, -58.61, -57.71, -54.97, -52.57,
+                    -44.48, -41.61, -36.95, -33.27, -31.78, -31.25, -29.93,
+                    -29.94]),
+    )
+
+
 class _TemperatureSwitchedCable(_DatasheetSpan, PassiveComponent):
     """
     Shared implementation for cryogenic cables that carry separate warm and cold

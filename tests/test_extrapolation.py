@@ -41,6 +41,7 @@ TABULATED = {
     "filter.vhf1320p": {},
     "filter.vhf5050p": {},
     "filter.vlf6700p": {},
+    "filter.vlfg2000p": {},
     "splitter.zn4pd_4r722_plus": {},
     "cable.sma_generic": {"length_m": 1.0},
     "cable.fm_f141": {"length_m": 1.0},

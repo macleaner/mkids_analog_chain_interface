@@ -25,6 +25,7 @@ path and date rather than copied here.
 | `RG316-SMAcable-HUBERSUHNERRG316UDataSheet.pdf` | HUBER+SUHNER RG316/U coax | `SMA_RG316_cables` | DOC-0000177782, 2020-10-14 | 2026-09-03 |
 | `VHF-5050+.pdf` | Mini-Circuits VHF-5050+ high pass | `FilterHP_VHF5050p` | REV. B | 2026-08-28 |
 | `VLF-6700+.pdf` | Mini-Circuits VLF-6700+ low pass | `FilterLP_VLF6700p` | (unmarked) | 2026-08-28 |
+| `VLFG-2000+_dashboard.pdf` | Mini-Circuits VLFG-2000+ low pass | `FilterLP_VLFG2000p` | REV. A ECO-013807 (spec), REV. OR 210812 (data) | 2026-09-04 |
 | `ZN4PD-4R722+_dashboard.pdf` | Mini-Circuits ZN4PD-4R722+ 4-way splitter/combiner | `ZN4PD_4R722plus` | REV. OR, ECO-011123 | 2026-09-03 |
 | `ZX60-83LN-S+.pdf` | Mini-Circuits ZX60-83LN-S+ LNA | `ZX60_83LN_Splus` | REV. C, ECO-015740 | 2026-09-02 |
 
@@ -44,6 +45,7 @@ a00b61e2fb304f22fe46eb062c326222be191801a5146e678fe793e2cc2df2b4  lnf-lnc1-5_6b.
 2fb12f580e6b30683fb0717ba493faaf307a5901cfd579e144365ca46266c664  RG316-SMAcable-HUBERSUHNERRG316UDataSheet.pdf
 81e25337f96fa20aec016a474bbad1884d726982479b126a04bb964229a6fd76  VHF-5050+.pdf
 e9e5a9a8f9e5d6e240a02ee54feaf3b2abc02d3ceacbeec0bacc613b170b5e90  VLF-6700+.pdf
+47dabd1b238dc782705f0ad645b0b053f96fdfd437760a28beeb25e652efd64a  VLFG-2000+_dashboard.pdf
 879208550a105029d08914f2b447fd78df7cedc56cbf911f3edce446c9de540d  ZN4PD-4R722+_dashboard.pdf
 0d09ff885bd31620bec944d399915ed29d0e5f9a4dcd791c2d1541fff5ef5273  ZX60-83LN-S+.pdf
 ```
@@ -59,6 +61,22 @@ amplitude and phase unbalance between arms, the isolation between outputs, the
 fact that a combiner sums four inputs rather than dividing one, the 30 W rating
 and the DC-pass path. A chain that turns on any of those is not one this model
 belongs in.
+
+**`VLFG-2000+`** is modelled from the +25 °C column alone. Its performance table
+is the only one here published at three temperatures, -55 °C, +25 °C and
++125 °C, and the part is genuinely temperature stable at the scale of the
+plots - but not at the tenth of a dB the table prints, since the 2 GHz passband
+loss runs 0.73 dB cold and 1.15 dB hot around the 0.92 dB the model uses. The
+other two columns are on the PDF; carrying them needs a temperature parameter
+the filter models do not have.
+
+Note also that this file bundles two documents of different revisions, and their
+insertion-loss tables disagree in the deep stopband: the REV. A spec sheet reads
+54.29 dB at 5 GHz and 44.25 dB at 7.5 GHz where the REV. OR performance data
+reads 73.67 and 52.57. They agree through the skirt and from 9 GHz up. The model
+takes the denser REV. OR table as it stands - the disagreement is 44 dB down at
+worst, past the point where a cascade can tell - so anyone checking the model
+against the front page of its own datasheet will find those two decades off.
 
 ## What is still missing
 

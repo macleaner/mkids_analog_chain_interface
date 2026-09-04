@@ -20,7 +20,7 @@ A Python tool for modeling and analyzing RF analog signal chains, with support f
   - Amplifiers (LNAs, warm amplifiers)
   - Cables (cryogenic, room temperature, various types)
   - Attenuators (temperature-aware)
-  - Filters (high-pass)
+  - Filters (high-pass and low-pass)
   - DAC/ADC models
 - **`signal_chain.py`**: Main signal chain orchestrator
 - **`utils.py`**: Utility functions (power conversions, thermal noise calculations)
@@ -51,7 +51,9 @@ A Python tool for modeling and analyzing RF analog signal chains, with support f
 
 #### Other Components
 - `Attenuator`: Temperature-aware attenuator (contributes thermal noise)
-- `FilterHP_VHF1320p`, `FilterHP_VHF1760p`, `FilterHP_VHF1910p`: High-pass filters
+- `FilterHP_VHF1320p`, `FilterHP_VHF1760p`, `FilterHP_VHF1910p`,
+  `FilterHP_VHF5050p`: High-pass filters
+- `FilterLP_VLF6700p`, `FilterLP_VLFG2000p`: Low-pass filters
 
 #### Converters
 - `AD9082_DAC`, `AD9082_ADC`: the modelled part — a fitted phase-noise skirt at

@@ -81,6 +81,7 @@ COMPONENT_SPECS = {
     "FilterHP_VHF1910p": {},
     "FilterHP_VHF5050p": {},
     "FilterLP_VLF6700p": {},
+    "FilterLP_VLFG2000p": {},
     "BCB029_SS034_cryo": {"length_m": 0.5, "temperature": 4},
     "BCB014_SS085_cryo": {"length_m": 0.5, "temperature": 4},
     "BCB024_SP034_cryo": {"length_m": 0.5, "temperature": 4},
