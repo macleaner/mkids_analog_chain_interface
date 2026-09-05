@@ -1285,7 +1285,7 @@ def test_the_bundled_examples_say_where_they_are_read():
     import os
     examples = os.path.join(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__))), "examples")
-    for name in ("simple_cryogenic_system.json", "pnnl_5ghz.json"):
+    for name in ("simple_cryogenic_system.json", "example_pnnl_5ghz.json"):
         with open(os.path.join(examples, name)) as fh:
             loaded = chain_api.from_json(fh.read())
         assert loaded["ok"], loaded.get("error")

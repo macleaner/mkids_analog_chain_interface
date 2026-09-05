@@ -20,7 +20,7 @@
       ]
     }
   },
-  "saved_utc": "2026-09-03T16:06:41+00:00",
+  "saved_utc": "2026-09-04T13:11:53+00:00",
   "digitizer": {
     "dac": {
       "type": "converter.generic_dac",
@@ -75,7 +75,7 @@
       "params": {
         "length_m": 2.0
       },
-      "label": "Cable2"
+      "label": "warm_coax_in"
     },
     {
       "type": "attenuator",
@@ -84,7 +84,7 @@
         "attenuation": -20.0,
         "temperature": 1.0
       },
-      "label": "Attenuator1"
+      "label": "atten_STILL"
     },
     {
       "type": "attenuator",
@@ -93,7 +93,7 @@
         "attenuation": -20.0,
         "temperature": 0.1
       },
-      "label": "Attenuator2"
+      "label": "atten_MXC"
     },
     {
       "type": "amplifier.lnf_lnc0_3_14b",
