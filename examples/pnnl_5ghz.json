@@ -2,7 +2,24 @@
   "format_version": 2,
   "name": "example PNNL 5GHz",
   "description": "example analog chain for deploying at PNNL",
-  "metadata": {},
+  "metadata": {
+    "analysis": {
+      "carrier_hz": 5500000000.0,
+      "spectral_hz": 1000.0,
+      "plane": {
+        "reference": "LNA",
+        "at": "input"
+      },
+      "gain_span_hz": [
+        4000000000.0,
+        8000000000.0
+      ],
+      "noise_span_hz": [
+        0.01,
+        1000.0
+      ]
+    }
+  },
   "saved_utc": "2026-09-03T16:06:41+00:00",
   "digitizer": {
     "dac": {

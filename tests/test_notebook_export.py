@@ -109,6 +109,58 @@ def test_it_runs_at_the_operating_point_it_was_given(tmp_path, monkeypatch):
     assert namespace["spectral_sweep"][-1] == pytest.approx(1e4)
 
 
+def test_it_opens_on_the_chains_own_operating_point(tmp_path, monkeypatch):
+    """
+    With nothing passed, the notebook opens where the chain says it is read
+    rather than on this module's defaults. That is what makes
+    ``chain_api.notebook()`` from a script agree with the browser's button: the
+    page started from those same stored values, so both hand over the same
+    operating point.
+    """
+    assert chain_api.set_analysis({
+        "carrier_hz": 5.0e9, "spectral_hz": 250.0,
+        "plane": {"reference": "ColdAtten", "at": "output"},
+        "gain_span_hz": [4.0e9, 6.0e9],
+        "noise_span_hz": [1.0, 1.0e4]})["ok"]
+
+    _result, document = generate()
+    namespace = run_cells(document, tmp_path, monkeypatch)
+
+    assert namespace["CARRIER"] == 5.0e9
+    assert namespace["SPECTRAL"] == 250.0
+    assert namespace["PLANE"] == "ColdAtten"
+    assert namespace["PLANE_AT"] == "output"
+    assert namespace["carrier_sweep"][0] == pytest.approx(4.0e9)
+    assert namespace["carrier_sweep"][-1] == pytest.approx(6.0e9)
+    assert namespace["spectral_sweep"][0] == pytest.approx(1.0)
+    assert namespace["spectral_sweep"][-1] == pytest.approx(1.0e4)
+    # And the chain travelling inside it still carries the point, so the
+    # notebook regenerated from that file opens in the same place.
+    assert namespace["chain"].metadata["analysis"]["carrier_hz"] == 5.0e9
+
+
+def test_what_the_view_is_showing_beats_what_the_chain_stores(tmp_path,
+                                                              monkeypatch):
+    """
+    The stored point is where a chain is *normally* read, not a lock on it. A
+    notebook asked for while looking somewhere else has to open there, or the
+    button stops meaning "carry on from here".
+    """
+    assert chain_api.set_analysis({
+        "carrier_hz": 5.0e9, "spectral_hz": 250.0,
+        "plane": {"reference": "ColdAtten", "at": "output"}})["ok"]
+
+    _result, document = generate(carrier_hz=4.5e8, reference="LNA",
+                                 at="input")
+    namespace = run_cells(document, tmp_path, monkeypatch)
+
+    assert namespace["CARRIER"] == 4.5e8
+    assert namespace["PLANE"] == "LNA"
+    # Field by field: the offset was not overridden, so it is still the
+    # chain's. Passing one argument does not discard the rest of the point.
+    assert namespace["SPECTRAL"] == 250.0
+
+
 def test_the_plane_spectrum_is_the_budget_swept(tmp_path, monkeypatch):
     """
     The plane-referred spectrum and the budget must be one calculation seen two

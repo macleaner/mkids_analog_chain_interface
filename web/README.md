@@ -116,6 +116,7 @@ converters. From there:
 | remove an endpoint | its `×`, or its select back to *— none —* |
 | read the gain across part of the chain | the **from plane** / **to plane** selects on the gain plot — left alone they are the ends of the chain |
 | name the chain, or annotate it | click the chain name in the top bar |
+| record where this chain is read | same panel — **save the current view** stores the carrier, the offset, the two spans and the three plane selects in the chain file, and opening that file puts the page back on them |
 | see what any of that saves as | the **Chain file** tab, right-hand column |
 | carry on in Jupyter | **notebook.ipynb**, top bar |
 | give a pane more room | drag the gutter beside it — double-click the gutter to put it back |
@@ -318,15 +319,61 @@ in the page carries the same bookkeeping as one built in a notebook — which
 cooldown, whose sample, which dataset. The panel opens itself after **new
 chain**, since nothing else asks for the description; **go** closes it.
 
-The file format also holds a free-form `metadata` object, which this panel does
-not edit. Prose in the description says the same things a cooldown id and a
-sample name would, in a field that cannot be left invalid, and one box beats
-two for the same bookkeeping. Metadata that arrived in a loaded file is
-preserved untouched — nothing in the page writes it — and is there to read
-under **Chain file**. Scripts and notebooks still set it with
-`chain_api.set_metadata`, which refuses anything `json.dumps` cannot write so
-the failure lands on the edit that caused it rather than on a download months
-later.
+The file format also holds a free-form `metadata` object, whose bookkeeping
+fields this panel does not edit. Prose in the description says the same things
+a cooldown id and a sample name would, in a field that cannot be left invalid,
+and one box beats two for the same bookkeeping. Metadata that arrived in a
+loaded file is preserved untouched and is there to read under **Chain file**.
+Scripts and notebooks still set it with `chain_api.set_metadata`, which refuses
+anything `json.dumps` cannot write so the failure lands on the edit that caused
+it rather than on a download months later.
+
+#### Where the chain is read
+
+The third row of the panel is the chain's **operating point** — the carrier and
+offset the budget is quoted at, the spans the two plots cover, the planes the
+budget and the two sweeps are taken at, and whether the noise plot is broken
+down per source. A 5 GHz deployment is not interesting at the 1.5 GHz the page
+has to open on before it knows what it is showing, and the span worth plotting
+is the band the hardware is for; both are properties of the chain, so the chain
+carries them. Open that file again and the page is put back where the work is,
+and **notebook.ipynb** starts from the same numbers.
+
+It is captured, not typed: **save the current view** reads the controls that
+already hold it. A field to re-enter the carrier in would be a second place to
+keep the same number, and the two would disagree the first time one was edited.
+It is also captured on a *click* rather than as the controls move — panning a
+plot is looking around, while deciding this is where the chain is read is a
+statement about the chain, and only the second belongs in a file. Otherwise
+every glance at another span would rewrite the record and two downloads taken a
+minute apart would differ.
+
+**clear** goes back to expressing no preference, which is not the same as
+storing the values this build happens to open on: the second still says 1.5 GHz
+after the default moves. The reading above the buttons shows only the fields
+the chain actually states, so *"the chain says 1.5 GHz"* and *"the chain says
+nothing"* stay distinguishable.
+
+It is stored inside `metadata`, under the one key the format reserves
+(`signal_chain.ANALYSIS_METADATA_KEY`), because metadata round-trips verbatim
+through every reader this format has had — a chain saved with an operating
+point still loads in an older build, and comes back out of it unchanged, which
+a new top-level field would not do. Two consequences worth knowing:
+
+* **`chain_api.set_metadata` replaces the whole mapping, this key with it.**
+  That is why the operating point has its own call, `set_analysis`, which
+  validates every field and leaves the bookkeeping alone.
+* **Nothing in the physics reads any of it.** It decides where you are looking,
+  never what the chain computes, so a chain carrying a strange operating point
+  still produces exactly the numbers its components say — `tests/test_chain_api.py`
+  pins that a budget and a sweep are unchanged by storing one.
+
+A plane has to resolve in the chain it is being stored on, so a default naming
+a stage that is not there is refused at the edit rather than silently never
+applying. One that goes stale afterwards — the stage renamed later — is dropped
+and reported in the same band a loaded file's other warnings appear in, because
+a record quietly not being acted on is the failure this format exists to
+prevent.
 
 The name is also what the download is called, so it is sanitized into a
 filename: `Cooldown 12/A` gives `cooldown_12_a.json`, never a path.
@@ -378,6 +425,9 @@ filename dropped in, so nothing in it has to be edited before it runs:
   the table is showing, the sweeps run over the spans in the two plot boxes,
   and the carrier and spectral offset are the ones in the controls — so the
   notebook opens where the work left off rather than on defaults nobody chose.
+  Which is also where the chain says it is read, if it carries an operating
+  point: the page started from those values, so the button and a bare
+  `chain_api.notebook()` in a script hand over the same ones.
   A generic template would hand someone `chain.get_index("LNA")` for a chain
   with no LNA in it, and fail on the cell meant to be teaching them the call.
 * **the component it changes is one that is in the chain**, given a value that

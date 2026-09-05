@@ -1103,6 +1103,199 @@ def test_unwritable_metadata_is_refused_at_the_edit():
     assert chain_api.to_json()["ok"] is True             # chain still writable
 
 
+# ---------------------------------------------------------- operating point
+POINT = {
+    "carrier_hz": 5.0e9,
+    "spectral_hz": 250.0,
+    "plane": {"reference": "WarmAmp1", "at": "input"},
+    "gain_span_hz": [4.0e9, 6.0e9],
+    "gain_from": {"reference": "LNA", "at": "input"},
+    "gain_to": {"reference": "WarmAmp2", "at": "output"},
+    "noise_span_hz": [1.0, 1.0e4],
+    "noise_plane": {"reference": "LNA", "at": "output"},
+    "contributions": True,
+}
+
+
+def test_the_operating_point_is_saved_with_the_chain():
+    """
+    Where a chain is read is a property of the chain - a 5 GHz deployment is
+    not interesting at 1.5 GHz - so it has to travel in the file rather than in
+    whatever session happened to set it.
+    """
+    result = chain_api.set_analysis(POINT)
+    assert result["ok"], result.get("error")
+    assert result["analysis"] == POINT
+
+    saved = json.loads(chain_api.to_json()["json"])
+    assert saved["metadata"]["analysis"] == POINT
+
+    # And it comes back through the same reader a notebook uses, unchanged.
+    reloaded = chain_api.from_json(json.dumps(saved))
+    assert reloaded["ok"], reloaded.get("error")
+    assert reloaded["analysis"] == POINT
+    assert reloaded["load_warnings"] == []
+
+
+def test_the_operating_point_never_changes_a_number():
+    """
+    It says where someone is looking, never what the chain computes. A budget
+    and a sweep asked the same question have to answer the same thing whatever
+    the chain stores - otherwise a bookkeeping field has become physics.
+    """
+    before = (chain_api.budget("LNA", "input", CARRIER, SPECTRAL),
+              chain_api.sweep_gain(1e8, 3e9, 21),
+              chain_api.sweep_noise(CARRIER, 1e2, 1e6, 11))
+    assert chain_api.set_analysis(POINT)["ok"]
+    after = (chain_api.budget("LNA", "input", CARRIER, SPECTRAL),
+             chain_api.sweep_gain(1e8, 3e9, 21),
+             chain_api.sweep_noise(CARRIER, 1e2, 1e6, 11))
+    assert before == after
+
+
+def test_the_operating_point_is_replaced_not_merged():
+    """Like metadata, so a field can be removed and not only overwritten."""
+    assert chain_api.set_analysis(POINT)["ok"]
+    result = chain_api.set_analysis({"carrier_hz": 1.0e9})
+    assert result["analysis"] == {"carrier_hz": 1.0e9}
+
+
+def test_clearing_it_is_not_storing_the_fallbacks():
+    """
+    A chain that expresses no preference and a chain that prefers exactly this
+    build's defaults are different records: the second still says 1.5 GHz after
+    the default moves. So clearing removes the key rather than writing it out.
+    """
+    assert chain_api.set_analysis(POINT)["ok"]
+    result = chain_api.set_analysis()
+    assert result["ok"], result.get("error")
+    assert result["analysis"] == {}
+    assert "analysis" not in json.loads(chain_api.to_json()["json"])["metadata"]
+    # Nothing stated, so `resolved` is entirely this build's own answer.
+    resolved = chain_api.analysis()["resolved"]
+    assert resolved["carrier_hz"] == 1.5e9
+    assert resolved["plane"] is None
+
+
+def test_a_stored_null_plane_says_the_chain_end():
+    """
+    Null is what ``sweep_gain`` and ``sweep_noise`` already mean by no
+    reference - the open input before the DAC, the open output after the ADC -
+    so it is stored as null and stays distinguishable from a field the chain
+    leaves out. ``plane`` has no such default, so a null there says nothing an
+    absent field does not and is not written at all.
+    """
+    result = chain_api.set_analysis({"gain_from": None, "noise_plane": None,
+                                     "plane": None})
+    assert result["ok"], result.get("error")
+    assert result["analysis"] == {"gain_from": None, "noise_plane": None}
+
+
+def test_a_plane_is_checked_against_the_chain_it_is_stored_on():
+    """
+    A default naming a stage this chain does not have is a value nothing can
+    ever act on. The moment it can still be reported is the edit that stored
+    it, so it is refused there rather than dropped later.
+    """
+    result = chain_api.set_analysis({"plane": {"reference": "LNA",
+                                               "at": "input"}})
+    assert result["ok"], result.get("error")
+    chain_api.new_chain("Bare")
+    refused = chain_api.set_analysis({"plane": {"reference": "LNA",
+                                                "at": "input"}})
+    assert refused["ok"] is False
+    assert "cannot resolve" in refused["error"]
+
+
+def test_a_plane_that_goes_stale_is_dropped_and_said_so():
+    """
+    Stored valid, then the stage it names is renamed. The default cannot apply
+    any more, and a record quietly not being acted on is the failure this
+    format exists to prevent - so it is reported, on the load, in the same list
+    every other thing a file did not fully specify appears in.
+    """
+    assert chain_api.set_analysis({"plane": {"reference": "LNA",
+                                             "at": "input"}})["ok"]
+    chain_api.set_label(4, "ColdLNA")
+
+    report = chain_api.analysis()
+    assert report["stored"]["plane"] == {"reference": "LNA", "at": "input"}
+    assert report["resolved"]["plane"] is None          # not used
+    assert len(report["ignored"]) == 1
+    assert "saved plane no longer applies" in report["ignored"][0]
+
+    saved = chain_api.to_json()["json"]                 # the stale value persists
+    loaded = chain_api.from_json(saved)
+    assert any("saved plane no longer applies" in note
+               for note in loaded["load_warnings"])
+
+
+def test_a_backwards_gain_span_is_dropped_rather_than_swept():
+    """
+    Both planes still resolve, but a reorder has put `to` upstream of `from`,
+    which names no path along the chain. Neither end survives on its own - half
+    a span is not the one that was saved - so both are dropped together.
+    """
+    assert chain_api.set_analysis(
+        {"gain_from": {"reference": "LNA", "at": "input"},
+         "gain_to": {"reference": "WarmAmp2", "at": "output"}})["ok"]
+    chain_api.move_component(7, 0)                      # WarmAmp2 above the LNA
+
+    report = chain_api.analysis()
+    assert report["resolved"]["gain_from"] is None
+    assert report["resolved"]["gain_to"] is None
+    assert any("gain span planes were not used" in note
+               for note in report["ignored"])
+
+
+def test_replacing_metadata_replaces_the_operating_point_with_it():
+    """
+    It lives *in* metadata, and ``set_metadata`` replaces the whole mapping.
+    That is the cost of a field that round-trips through every reader this
+    format has had, and the reason editing the operating point has its own
+    call: a caller replacing metadata by hand is replacing all of the record.
+    """
+    assert chain_api.set_analysis(POINT)["ok"]
+    result = chain_api.set_metadata({"cooldown": 12})
+    assert result["metadata"] == {"cooldown": 12}
+    assert result["analysis"] == {}
+
+
+def test_the_preset_says_where_it_is_read(fresh_preset):
+    """
+    A preset is data the wheel carries, operating point included, so the page
+    opens on the plane the cryogenic budget is decided at rather than inferring
+    one from stage names.
+    """
+    assert fresh_preset["analysis"]["plane"] == {"reference": "LNA",
+                                                 "at": "input"}
+    assert fresh_preset["analysis"]["carrier_hz"] == 1.5e9
+    # Through the same setter a user's edit goes through, so a preset naming a
+    # stage it does not have would fail here rather than shipping as a default
+    # that never applies.
+    assert chain_api.analysis()["ignored"] == []
+
+
+def test_the_bundled_examples_say_where_they_are_read():
+    """
+    The tracked example chains are records, and one of them is a 5 GHz
+    deployment: opening it at the 1.5 GHz a page has to start on before it
+    knows what it is showing is the case this field exists for.
+    """
+    import os
+    examples = os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "examples")
+    for name in ("simple_cryogenic_system.json", "pnnl_5ghz.json"):
+        with open(os.path.join(examples, name)) as fh:
+            loaded = chain_api.from_json(fh.read())
+        assert loaded["ok"], loaded.get("error")
+        assert loaded["load_warnings"] == []
+        assert loaded["analysis"]["plane"]["reference"] == "LNA"
+
+    assert loaded["analysis"]["carrier_hz"] == 5.5e9     # the PNNL chain's band
+    assert loaded["analysis"]["gain_span_hz"] == [4.0e9, 8.0e9]
+
+
 # ------------------------------------------------------------- round tripping
 def test_round_trip_preserves_the_chain():
     exported = chain_api.to_json()
@@ -1193,6 +1386,40 @@ def test_exported_json_loads_as_a_signal_chain():
      "metadata must be an object"),
     (lambda: chain_api.set_metadata({12: "cooldown"}),
      "metadata keys must be strings"),
+    (lambda: chain_api.set_analysis([("carrier_hz", 1e9)]),
+     "operating point must be an object"),
+    (lambda: chain_api.set_analysis({"carier_hz": 1e9}), "unknown field"),
+    (lambda: chain_api.set_analysis({"carrier_hz": -1.0}),
+     "must be a positive frequency"),
+    (lambda: chain_api.set_analysis({"carrier_hz": "1.5 GHz"}),
+     "carrier_hz must be a number"),
+    (lambda: chain_api.set_analysis({"spectral_hz": float("nan")}),
+     "spectral_hz must be finite"),
+    (lambda: chain_api.set_analysis({"gain_span_hz": [3e9, 1e8]}),
+     "must exceed"),
+    (lambda: chain_api.set_analysis({"gain_span_hz": [1e8, 2e9, 3e9]}),
+     "[start, stop] pair"),
+    (lambda: chain_api.set_analysis({"noise_span_hz": [0.0, 1e3]}),
+     "must be a positive frequency"),
+    (lambda: chain_api.set_analysis({"contributions": "yes"}),
+     "must be true or false"),
+    (lambda: chain_api.set_analysis({"plane": "LNA"}),
+     "must be an object with 'reference' and 'at'"),
+    (lambda: chain_api.set_analysis({"plane": {"reference": "LNA"}}),
+     "at must be 'input' or 'output'"),
+    (lambda: chain_api.set_analysis({"plane": {"reference": "LNA",
+                                               "at": "input", "of": "x"}}),
+     "has no field 'of'"),
+    (lambda: chain_api.set_analysis({"plane": {"reference": None,
+                                               "at": "input"}}),
+     "must be a stage label or a component index"),
+    (lambda: chain_api.set_analysis({"plane": {"reference": "NoSuchStage",
+                                               "at": "input"}}),
+     "cannot resolve"),
+    (lambda: chain_api.set_analysis(
+        {"gain_from": {"reference": "WarmAmp2", "at": "output"},
+         "gain_to": {"reference": "LNA", "at": "input"}}),
+     "gain_to is upstream of gain_from"),
 ])
 def test_failures_come_back_as_data(call, fragment):
     """

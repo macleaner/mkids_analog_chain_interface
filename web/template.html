@@ -82,6 +82,16 @@ textarea{resize:vertical;line-height:1.45}
 #record textarea{font-family:var(--mono);font-size:var(--fs2)}
 #record .doc{margin-top:0}
 #record .rfoot{display:flex;justify-content:flex-end;margin-top:9px}
+/* The stored operating point is read, not typed: it is captured from the
+   controls that already hold it, so this row is a reading plus two buttons. */
+#record .point{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+/* Its own line, so the buttons keep one position: the reading is a sentence
+   whose length changes with what the chain stores, and buttons that slid along
+   with it would move under the pointer between one click and the next. */
+#record .point .read{flex:1 0 100%;font-family:var(--mono);font-size:var(--fs2);
+  color:var(--ink2);line-height:1.5}
+#record .point .read b{color:var(--ink)}
+#record .point .none{color:var(--ink3)}
 #top .spacer{flex:1}
 #stamp{font-family:var(--mono);font-size:var(--fs3);color:var(--ink3);text-align:right;line-height:1.4}
 
@@ -354,6 +364,20 @@ this page's plots and table over it — open it in Jupyter">notebook.ipynb</butt
   <p class="doc">Saved with the chain, and not derivable from the components:
     this is where whatever ties the chain to the measurement it describes gets
     written down.</p>
+  <div class="rrow"><label>read at</label>
+    <div>
+      <div class="point">
+        <span class="read" id="recPoint"></span>
+        <button id="recCapture">save the current view</button>
+        <button id="recClear">clear</button>
+      </div>
+      <p class="doc">The operating point this chain is normally read at — the
+        carrier and offset the budget is quoted at, the spans the two plots
+        cover, the planes they are taken at. Saved in the chain file, applied
+        when it is opened again, and used as the starting point of
+        <b>notebook.ipynb</b>. Nothing in the physics reads it: it decides
+        where you are looking, never what the chain computes.</p>
+    </div></div>
   <div class="rfoot"><button id="recDone" class="primary">go</button></div>
 </div>
 
@@ -567,6 +591,9 @@ async function boot(){
     renderLibrary();
     renderSpecs();
     CHAIN = call('load_preset', CONFIG.default_preset);
+    // Before the first render, so the page opens where the preset says it is
+    // read rather than drawing this build's defaults and then moving.
+    applyPoint();
     renderAll();
     $('boot').style.display = 'none';
   } catch (err){
@@ -904,14 +931,137 @@ function renderDigitizer(){
    The name and the notes are part of the saved file and cannot be recovered
    from the components, so a chain built here has to be able to carry them.
 
-   The file format also holds a free-form `metadata` object, which this panel
-   does not edit: prose in the description says the same things a cooldown id
-   and a sample name would, in a field nobody has to keep valid JSON. Metadata
-   a loaded file arrived with is preserved untouched by every call here and is
-   there to read under Chain file. */
+   Beside them the file carries the operating point the chain is read at, in its
+   metadata under the one key the format reserves. That is not typed in here:
+   it is whatever the budget and the two plots are already set to, captured on a
+   click. A field to re-enter the carrier in would be a second place to keep the
+   same number, and the two would disagree the first time one was edited.
+
+   The rest of `metadata` - a cooldown id, a sample name - this panel does not
+   edit: prose in the description says the same things in a field nobody has to
+   keep valid JSON. Metadata a loaded file arrived with is preserved untouched
+   by every call here and is there to read under Chain file.                   */
+
+/* A frequency for the reading below. The operating point spans decades either
+   side of a hertz - 10 mHz offsets and gigahertz carriers - so each number
+   picks its own prefix; `fmtHz` is for the plots' range and stops at kHz. */
+function fmtPoint(hz){
+  const abs = Math.abs(hz);
+  for (const [scale, unit] of [[1e9,'GHz'], [1e6,'MHz'], [1e3,'kHz'],
+                               [1,'Hz'], [1e-3,'mHz']])
+    if (abs >= scale) return Number((hz / scale).toPrecision(3)) + ' ' + unit;
+  return hz.toExponential(2) + ' Hz';
+}
+
+/* One [reference, at] pair as the file stores it, or null - which for the two
+   plots is the chain's own end, and for the budget table is no plane at all
+   (an empty chain has none). */
+function planePair(id){
+  const chosen = JSON.parse($(id).value || 'null');
+  return chosen ? {reference: chosen[0], at: chosen[1]} : null;
+}
+
+/* Everything the controls are set to, in the shape `set_analysis` takes. Read
+   off the DOM rather than tracked alongside it, so what is saved is what is on
+   screen and there is nothing to keep in step. */
+function currentPoint(){
+  return {
+    carrier_hz: num($('carrier').value) * 1e9,
+    spectral_hz: num($('spectral').value) * 1e3,
+    plane: planePair('plane'),
+    gain_span_hz: [num($('g0').value) * 1e9, num($('g1').value) * 1e9],
+    gain_from: planePair('gfrom'),
+    gain_to: planePair('gto'),
+    noise_span_hz: [num($('n0').value), num($('n1').value)],
+    noise_plane: planePair('nplane'),
+    contributions: showContrib,
+  };
+}
+
+/* What the chain says it should be read at, in one line. Only the fields it
+   actually states: "the chain says 1.5 GHz" and "the chain says nothing" are
+   different records, and a reading that filled the gaps with this build's
+   defaults would show them as the same. */
+function pointReading(point){
+  const plane = p => `${p.reference} (${p.at})`;
+  const parts = [];
+  if ('carrier_hz' in point) parts.push(fmtPoint(point.carrier_hz) + ' carrier');
+  if ('spectral_hz' in point) parts.push(fmtPoint(point.spectral_hz) + ' offset');
+  if ('plane' in point) parts.push('budget at ' + plane(point.plane));
+  if ('gain_span_hz' in point)
+    parts.push(`gain ${fmtPoint(point.gain_span_hz[0])}–${fmtPoint(point.gain_span_hz[1])}`);
+  if ('gain_from' in point || 'gain_to' in point)
+    parts.push(`gain ${point.gain_from ? plane(point.gain_from) : 'chain input'}`
+             + ` → ${point.gain_to ? plane(point.gain_to) : 'chain output'}`);
+  if ('noise_span_hz' in point)
+    parts.push(`noise ${fmtPoint(point.noise_span_hz[0])}–${fmtPoint(point.noise_span_hz[1])}`);
+  if ('noise_plane' in point)
+    parts.push('noise at '
+             + (point.noise_plane ? plane(point.noise_plane) : 'chain output'));
+  if ('contributions' in point && point.contributions) parts.push('per source');
+  return parts;
+}
+
 function renderRecord(){
   $('recName').value = CHAIN.name;
   $('recDesc').value = CHAIN.description || '';
+
+  const parts = pointReading(CHAIN.analysis || {});
+  const read = $('recPoint');
+  read.classList.toggle('none', parts.length === 0);
+  if (!parts.length){
+    read.textContent = 'nothing saved — opens on this build’s defaults';
+    read.title = 'This chain expresses no preference, which is not the same '
+               + 'as preferring the values the page happens to open on.';
+  } else {
+    read.innerHTML = '<b></b>';
+    read.querySelector('b').textContent = parts.join(' · ');
+    read.title = 'Applied when this chain file is opened, and where '
+               + 'notebook.ipynb starts.';
+  }
+}
+
+/* Planes the next renderPlanes() should prefer, once the selects have been
+   rebuilt and it is known which planes exist. A saved plane cannot simply be
+   written into a select: until the chain is rendered the options are not there,
+   and assigning a value no option carries silently selects nothing.
+
+   Consumed once. It is a chain having just been loaded, not a standing
+   preference - editing the chain afterwards must not pull the selects back to
+   the file's planes.                                                          */
+let pendingPlanes = null;
+
+/* Select the plane `want` names, if this select is offering it. `undefined` is
+   a chain that says nothing about it, and null is its `chain input` /
+   `chain output` option - the open end of the chain. Returns whether a choice
+   was made, so a caller can fall back to its own. */
+function preferPlane(sel, want){
+  if (want === undefined) return false;
+  const value = want === null ? 'null'
+                              : JSON.stringify([want.reference, want.at]);
+  if (![...sel.options].some(o => o.value === value)) return false;
+  sel.value = value;
+  return true;
+}
+
+/* Put the page where the chain says it is read: the numbers straight into the
+   fields, the planes left for renderPlanes(), which is the only code that
+   knows which of them exist. Called on load, not on every render - it is the
+   file speaking once, after which the controls are the user's. */
+function applyPoint(){
+  const point = CHAIN.analysis || {};
+  if ('carrier_hz' in point) $('carrier').value = point.carrier_hz / 1e9;
+  if ('spectral_hz' in point) $('spectral').value = point.spectral_hz / 1e3;
+  if ('gain_span_hz' in point){
+    $('g0').value = point.gain_span_hz[0] / 1e9;
+    $('g1').value = point.gain_span_hz[1] / 1e9;
+  }
+  if ('noise_span_hz' in point){
+    $('n0').value = point.noise_span_hz[0];
+    $('n1').value = point.noise_span_hz[1];
+  }
+  if ('contributions' in point) setContrib(point.contributions);
+  pendingPlanes = point;
 }
 
 /* ===================== chain view ===================== */
@@ -1338,24 +1488,41 @@ function gainPlane(sel, open){
    default span is the total gain either way. They are labelled for the chain
    rather than for the converters so that they still read correctly on a chain
    with one end open. */
-function fillGainPlanes(){
-  if (!fillPlanes($('gfrom'), 'chain input'))
+/* `want` is a chain's saved planes, on the render that follows loading it. A
+   saved plane wins over the plane that was selected before, because the point
+   of opening a file is to be put where that chain is read; anything the file
+   does not name keeps the selection, and then falls back to the chain's end. */
+function fillGainPlanes(want){
+  want = want || {};                    // nothing pending: every field absent
+  const kept = fillPlanes($('gfrom'), 'chain input');
+  if (!preferPlane($('gfrom'), want.gain_from) && !kept)
     $('gfrom').value = 'null';
   const from = gainPlane($('gfrom'), 0);
-  if (!fillPlanes($('gto'), 'chain output',
-                  plane => planeIndex(plane) > from))
+  const keptTo = fillPlanes($('gto'), 'chain output',
+                            plane => planeIndex(plane) > from);
+  if (!preferPlane($('gto'), want.gain_to) && !keptTo)
     $('gto').value = 'null';
 }
 
 function renderPlanes(){
+  // Consumed here: this is the render the loaded chain's planes were waiting
+  // for, and every render after it is an edit the user made. Normalized to an
+  // object, so an absent field reads as undefined - "the chain says nothing" -
+  // and never as the null that means the chain's own end.
+  const want = pendingPlanes || {};
+  pendingPlanes = null;
+
   const table = $('plane');
-  if (!fillPlanes(table, null)){
+  const kept = fillPlanes(table, null);
+  if (!preferPlane(table, want.plane) && !kept){
     const lna = [...table.options].find(o => /\(input\)/.test(o.textContent)
                                           && /lna/i.test(o.textContent));
     table.value = lna ? lna.value : (table.options[0] ? table.options[0].value : '');
   }
-  if (!fillPlanes($('nplane'), 'chain output')) $('nplane').value = 'null';
-  fillGainPlanes();
+  const keptNoise = fillPlanes($('nplane'), 'chain output');
+  if (!preferPlane($('nplane'), want.noise_plane) && !keptNoise)
+    $('nplane').value = 'null';
+  fillGainPlanes(want);
 }
 
 function fmt(value, col){
@@ -1897,10 +2064,18 @@ for (const btn of document.querySelectorAll('#unit button'))
 for (const btn of document.querySelectorAll('#tabs button'))
   btn.onclick = guard(() => selectPane(btn.dataset.pane));
 
-$('btnContrib').onclick = guard(() => {
-  showContrib = !showContrib;
+/* The toggle and its button, set together - a loaded chain can ask for the
+   breakdown, and a button reading `off` over a plot showing every source would
+   be the state lying about itself. Redrawing is the caller's, so applying a
+   chain's operating point does not draw the plot twice. */
+function setContrib(on){
+  showContrib = !!on;
   $('btnContrib').textContent = showContrib ? 'on' : 'off';
   $('btnContrib').classList.toggle('on', showContrib);
+}
+
+$('btnContrib').onclick = guard(() => {
+  setContrib(!showContrib);
   renderNoise();
 });
 
@@ -1918,6 +2093,26 @@ $('recName').onchange = guard(() => {
 $('recDesc').onchange = guard(() => {
   try { CHAIN = call('set_description', $('recDesc').value); }
   finally { renderAll(); }
+});
+
+/* The operating point is saved on a click rather than as the controls move.
+   Panning a plot is looking around; deciding this is where the chain is read
+   is a statement about the chain, and only the second belongs in its file -
+   otherwise every glance at another span would rewrite the record and the
+   download would differ from the one taken a moment before.
+
+   Python re-validates what it is handed, so a span the plots would refuse is
+   refused here too and the panel keeps saying what is actually stored. */
+$('recCapture').onclick = guard(() => {
+  CHAIN = call('set_analysis', currentPoint());
+  renderAll();
+});
+
+/* Back to expressing no preference - which is not the same as storing the
+   values this build happens to open on, and reads differently in the panel. */
+$('recClear').onclick = guard(() => {
+  CHAIN = call('set_analysis');
+  renderAll();
 });
 
 /* Nothing to commit here - both fields have already gone to Python on the blur
@@ -1992,6 +2187,9 @@ $('fileJson').onchange = async ev => {
   try {
     CHAIN = call('from_json', await file.text());
     selected = null;
+    // A chain file can say where it is read. Applied before the first render
+    // of it, so the plots are drawn once, over the spans the file names.
+    applyPoint();
     renderAll();
     // The one moment these can be shown. A parameter the file did not specify,
     // or a converter that could not be rebuilt, is invisible in the chain that

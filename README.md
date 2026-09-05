@@ -95,8 +95,11 @@ It opens on a preset, but **new chain** starts an empty one you build up from
 the component library and the **Converters** selects, name stage by stage, and
 download as a chain file — the same format everything else here reads. Clicking
 the chain name in the top bar edits the record that file carries: its name,
-free-text notes, and a JSON `metadata` object for whatever ties the chain to
-the measurement it describes.
+free-text notes, a JSON `metadata` object for whatever ties the chain to the
+measurement it describes, and the operating point the chain is normally read at
+— **save the current view** stores the carrier, the offset, the two plot spans
+and the planes they are taken at, so opening that file again puts the page back
+where the work is instead of on the defaults it has to start on.
 
 **notebook.ipynb**, beside that download, writes a Jupyter notebook for the
 chain on screen: it draws the page's two plots in matplotlib, adds the noise
@@ -202,7 +205,16 @@ if chain.load_warnings:
   "format_version": 2,
   "name": "cd17_feedline_a",
   "description": "Cooldown CD-17, feedline A",
-  "metadata": {"cooldown": "CD-17"},
+  "metadata": {
+    "cooldown": "CD-17",
+    "analysis": {
+      "carrier_hz": 5.5e9,
+      "spectral_hz": 1000.0,
+      "plane": {"reference": "LNA", "at": "input"},
+      "gain_span_hz": [4.0e9, 8.0e9],
+      "noise_span_hz": [0.01, 1000.0]
+    }
+  },
   "saved_utc": "2026-08-24T14:02:11+00:00",
   "digitizer": {
     "dac": {"type": "converter.ad9082_dac", "name": "AD9082_DAC",
@@ -239,6 +251,59 @@ Properties that matter for bookkeeping:
   rather than being applied silently. The browser GUI lists these in the band
   above its panes when a chain is opened.
 - `format_version` allows migration; `saved_utc` and `metadata` carry provenance.
+
+### Where a chain is read
+
+`metadata` is free-form bookkeeping with one reserved key,
+`analysis` (`signal_chain.ANALYSIS_METADATA_KEY`): the operating point this
+chain is normally read at. A 5 GHz deployment is not interesting at the 1.5 GHz
+a view has to open on before it knows what it is showing, and the span worth
+plotting is the band the hardware is for — both are properties of the chain, so
+the chain carries them. The browser GUI applies it when the file is opened and
+`chain_api.notebook()` starts a generated notebook there.
+
+```python
+import chain_api
+
+chain_api.from_json(open("cd17_feedline_a.json").read())
+chain_api.set_analysis({
+    "carrier_hz": 5.5e9,                                  # the RF tone
+    "spectral_hz": 1.0e3,                                 # offset from it
+    "plane": {"reference": "LNA", "at": "input"},         # where the budget is read
+    "gain_span_hz": [4.0e9, 8.0e9],                       # the gain sweep
+    "noise_span_hz": [1.0e-2, 1.0e3],                     # the noise sweep
+})
+chain_api.analysis()["resolved"]      # every field, fallbacks filled in
+chain_api.notebook()                  # opens on the above, with no arguments
+```
+
+`gain_from`, `gain_to` and `noise_plane` take the same `{"reference", "at"}`
+form for the two sweeps, where null is the chain's own end — the input before
+the DAC, the output after the ADC — exactly as a reference of `None` means
+there in `sweep_gain` and `sweep_noise`. `contributions` is whether the noise
+sweep is shown broken down per source. `set_analysis()` with no argument clears
+the key, which is a chain that expresses no preference rather than one that
+prefers today's defaults.
+
+- **It lives in `metadata` because metadata round-trips verbatim** through every
+  reader this format has had: a chain saved with an operating point still loads
+  in an older build, and comes back out of it unchanged. A new top-level field
+  would not. The cost is that `set_metadata` replaces the whole mapping, this
+  key with it — hence the separate call.
+- **Nothing in the physics reads it.** It says where you are looking, never what
+  the chain computes, so a chain carrying a strange operating point still
+  produces exactly the numbers its components say.
+- **It is validated where it is written.** Frequencies must be positive and
+  finite, spans ordered, and a plane has to resolve in the chain it is being
+  stored on — a default naming a stage that is not there is refused at the edit
+  rather than silently never applying. An unknown field is refused too, so a
+  typo is not a default that quietly never took effect.
+- **A plane that goes stale is dropped and reported.** Rename the stage a stored
+  plane names and the field stops applying; it turns up in `load_warnings` on
+  the next load, and in `chain_api.analysis()["ignored"]`, rather than being
+  repaired or silently ignored.
+- **Point counts are deliberately not stored.** No view exposes them, so a
+  stored value would be a default nobody could see or check.
 
 ## Adding a Component
 

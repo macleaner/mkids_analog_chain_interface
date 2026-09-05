@@ -26,6 +26,7 @@ own right::
     chain_api.budget("LNA", at="input", carrier_hz=1.5e9, spectral_hz=1e3)
 """
 
+import copy
 import functools
 import json
 import math
@@ -36,7 +37,7 @@ import numpy as np
 import notebook_export
 import registry
 from component import ADCComponent, DACComponent
-from signal_chain import SignalChain
+from signal_chain import ANALYSIS_METADATA_KEY, SignalChain
 from utils import kb, to_dbm
 
 __all__ = [
@@ -45,6 +46,7 @@ __all__ = [
     "set_param", "set_label",
     "set_digitizer", "set_digitizer_param",
     "set_name", "set_description", "set_metadata",
+    "analysis", "set_analysis",
     "budget", "sweep_gain", "sweep_noise",
     "to_json", "from_json", "notebook", "provenance",
 ]
@@ -363,6 +365,17 @@ _PRESETS: Dict[str, Dict[str, Any]] = {
             ("amplifier.zx60_3018g_plus", {}, "WarmAmp1"),
             ("amplifier.zx60_3018g_plus", {}, "WarmAmp2"),
         ],
+        # Where this chain is worth reading: at the LNA input, because that is
+        # the plane the cryogenic budget is decided at, over the band the
+        # amplifiers are for. Carried as data like everything else about the
+        # preset, so a view opens on it instead of guessing from stage names.
+        "analysis": {
+            "carrier_hz": 1.5e9,
+            "spectral_hz": 1.0e3,
+            "plane": {"reference": "LNA", "at": "input"},
+            "gain_span_hz": [1.0e8, 3.0e9],
+            "noise_span_hz": [1.0e-2, 1.0e3],
+        },
     },
 }
 
@@ -390,6 +403,12 @@ def load_preset(key: str) -> Dict[str, Any]:
     chain.set_digitizer(registry.create(dac_id, dac_params),
                         registry.create(adc_id, adc_params))
     _CHAIN = chain
+    # Through the setter, so a preset's operating point is held to the same
+    # rules a saved one is - including that its planes resolve in the chain the
+    # preset just built. A preset that named a stage it does not have would
+    # otherwise ship as a default that never applies.
+    if spec.get("analysis"):
+        _set_analysis(spec["analysis"])
     return _describe()
 
 
@@ -557,6 +576,10 @@ def _describe() -> Dict[str, Any]:
     }
     return {"name": _CHAIN.name, "description": _CHAIN.description,
             "metadata": dict(_CHAIN.metadata),
+            # Only what the chain actually states, so a view keeps its own
+            # fallback for the fields it says nothing about. `analysis()` has
+            # the resolved form.
+            "analysis": _stored_analysis(),
             "stages": out_stages, "planes": planes,
             "n_components": len(_CHAIN.components),
             "digitizer": digitizer,
@@ -766,6 +789,12 @@ def set_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
     It is persisted verbatim, which means it has to survive ``json.dumps`` -
     checked here rather than at save time, because a chain that cannot be
     written is a record that has already been lost.
+
+    The chain's operating point lives in here too, under
+    ``signal_chain.ANALYSIS_METADATA_KEY``, so replacing metadata replaces that
+    with it. Use :func:`set_analysis` to edit the operating point and leave the
+    bookkeeping alone; a caller replacing this mapping is replacing all of the
+    record, which is what the whole-replacement rule says.
     """
     if not isinstance(metadata, dict):
         raise TypeError(f"metadata must be an object, got "
@@ -776,6 +805,288 @@ def set_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
     json.dumps(metadata)                     # raises on anything unwritable
     _CHAIN.metadata = dict(metadata)
     return _describe()
+
+
+# --------------------------------------------------------------------------
+# the operating point - the parameters this chain is normally read at
+# --------------------------------------------------------------------------
+# A chain is read somewhere. A 5 GHz deployment is not interesting at the
+# 1.5 GHz a view has to open on before it knows what it is showing, and the
+# span worth plotting is the band the hardware is for. Those are properties of
+# the chain, not of the session, so the chain carries them: opening the file
+# puts the view where the work is, and a notebook generated from it opens on
+# the same numbers instead of on defaults nobody chose.
+#
+# They are stored in the free-form `metadata` object, under the one key this
+# repo reserves (`signal_chain.ANALYSIS_METADATA_KEY`). Metadata round-trips
+# verbatim through every reader this format has had, so a chain saved with an
+# operating point loads unchanged in an older build - which a new top-level
+# field would not do. The cost is that `set_metadata` replaces the whole
+# mapping, this key with it; that is why editing the operating point has its
+# own call rather than being done through metadata by hand.
+#
+# Nothing in the physics reads any of this. It is a default for whatever asks,
+# so a stored value cannot change what a chain computes - only where someone
+# is looking when they compute it.
+
+#: What to use for whatever the chain does not say. These are the values the
+#: browser's controls and :func:`notebook` opened on before a chain could carry
+#: its own, so a chain with no stored operating point behaves exactly as before.
+_ANALYSIS_FALLBACK: Dict[str, Any] = {
+    "carrier_hz": 1.5e9,
+    "spectral_hz": 1.0e3,
+    "gain_span_hz": [1.0e8, 3.0e9],
+    "noise_span_hz": [1.0e-2, 1.0e3],
+    "contributions": False,
+}
+
+#: The fields naming a plane. Each resolves to None when the chain says
+#: nothing, which is what the analysis functions already mean by a reference of
+#: None - the open input before the DAC for a `from`, the open output after the
+#: ADC for a `to` and for the noise sweep. ``plane`` is the one exception:
+#: :func:`budget` has no such default, so None there means "no preference" and
+#: whatever is asking picks (the browser reaches for an LNA input, a generated
+#: notebook for the last stage).
+_ANALYSIS_PLANE_FIELDS = ("plane", "gain_from", "gain_to", "noise_plane")
+
+
+def _positive_hz(value: Any, field: str) -> float:
+    """A frequency, refusing the values a frequency cannot be."""
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        raise TypeError(f"{field} must be a number, got {value!r}") from None
+    if not math.isfinite(out):
+        raise ValueError(f"{field} must be finite, got {value!r}")
+    if out <= 0:
+        raise ValueError(f"{field} must be a positive frequency in Hz, "
+                         f"got {out!r}")
+    return out
+
+
+def _analysis_span(value: Any, field: str) -> List[float]:
+    """
+    A sweep span as ``[start, stop]`` in Hz.
+
+    Ordered and positive, because that is what :func:`_grid` accepts: a stored
+    span that no sweep would run is not a default, it is a saved error.
+    """
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise TypeError(f"{field} must be a [start, stop] pair in Hz, "
+                        f"got {value!r}")
+    start = _positive_hz(value[0], f"{field} start")
+    stop = _positive_hz(value[1], f"{field} stop")
+    if stop <= start:
+        raise ValueError(f"{field} stop ({stop:g}) must exceed "
+                         f"start ({start:g})")
+    return [start, stop]
+
+
+def _analysis_flag(value: Any, field: str) -> bool:
+    if not isinstance(value, bool):
+        raise TypeError(f"{field} must be true or false, got {value!r}")
+    return value
+
+
+def _analysis_plane(value: Any, field: str) -> Optional[Dict[str, Any]]:
+    """
+    A stored plane as ``{"reference", "at"}``, checked against this chain.
+
+    It is resolved now rather than when something comes to use it: a default
+    naming a stage the chain does not have is a value nothing can act on, and
+    this is the last moment anyone is present to be told. A plane that goes
+    stale later - the stage renamed after the default was stored - is dropped
+    by :func:`_resolved_analysis` and reported, not repaired.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise TypeError(f"{field} must be an object with 'reference' and "
+                        f"'at', got {value!r}")
+    unknown = sorted(set(value) - {"reference", "at"})
+    if unknown:
+        raise ValueError(f"{field} has no field {unknown[0]!r}; a plane is "
+                         f"'reference' and 'at'")
+    reference, at = value.get("reference"), value.get("at")
+    if isinstance(reference, bool) or not isinstance(reference, (str, int)):
+        raise TypeError(f"{field}.reference must be a stage label or a "
+                        f"component index, got {reference!r}")
+    _CHAIN.resolve_plane(reference, at)     # raises on an unknown plane or side
+    return {"reference": reference, "at": at}
+
+
+#: Every field, in the order it is written to the file, with the check that
+#: decides what the field may hold. One table, used by both the setter and the
+#: resolver, so nothing can be stored that will later be silently ignored.
+_ANALYSIS_FIELDS: Dict[str, Any] = {
+    "carrier_hz": _positive_hz,
+    "spectral_hz": _positive_hz,
+    "plane": _analysis_plane,
+    "gain_span_hz": _analysis_span,
+    "gain_from": _analysis_plane,
+    "gain_to": _analysis_plane,
+    "noise_span_hz": _analysis_span,
+    "noise_plane": _analysis_plane,
+    "contributions": _analysis_flag,
+}
+
+
+def _stored_analysis() -> Dict[str, Any]:
+    """
+    The operating point in the chain's metadata, verbatim, or ``{}``.
+
+    Copied all the way down, not one level: a plane is a nested object and a
+    span is a list, so a shallow copy would hand a caller pieces of the chain's
+    own metadata to edit in place. Everything here has already been through
+    ``json.dumps``, so there is nothing deepcopy cannot follow.
+    """
+    value = _CHAIN.metadata.get(ANALYSIS_METADATA_KEY)
+    return copy.deepcopy(value) if isinstance(value, dict) else {}
+
+
+def _gain_span_planes(point: Dict[str, Any]) -> None:
+    """
+    Refuse a gain span that runs backwards along the chain.
+
+    ``sweep_gain`` sums the stages between the two planes, so a `to` upstream of
+    a `from` names no path at all. Equal planes are allowed - that is a span
+    with nothing in it, and 0 dB is the honest answer.
+    """
+    stages = _CHAIN.stages()
+    ends = []
+    for field, open_plane in (("gain_from", 0), ("gain_to", len(stages))):
+        plane = point.get(field)
+        ends.append(open_plane if plane is None
+                    else _CHAIN.resolve_plane(plane["reference"], plane["at"])[0])
+    if ends[1] < ends[0]:
+        raise ValueError(f"gain_to is upstream of gain_from, so the two name "
+                         f"no path along the chain (planes {ends[0]} and "
+                         f"{ends[1]})")
+
+
+@_guard
+def set_analysis(defaults: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    Store the operating point this chain should be read at, or clear it.
+
+    The whole object is replaced, like :func:`set_metadata` replaces metadata:
+    a field left out is a field the chain says nothing about, and whatever
+    reads it falls back to its own default. ``set_analysis()`` with no argument
+    removes the key entirely, which is a chain that expresses no preference -
+    not a chain that prefers the fallbacks.
+
+    Fields, all optional:
+
+    ``carrier_hz``, ``spectral_hz``
+        The example operating point: the RF tone the noise is quoted for, and
+        the offset from it. Positive frequencies in Hz.
+    ``gain_span_hz``, ``noise_span_hz``
+        ``[start, stop]`` for the two sweeps - carrier frequency for the gain,
+        spectral offset for the noise. Ordered and positive.
+    ``plane``
+        Where the noise budget is read: ``{"reference": "LNA", "at": "input"}``,
+        naming a plane exactly as :func:`budget` does.
+    ``gain_from``, ``gain_to``, ``noise_plane``
+        The same, for the two sweeps. Null is the chain's own end - the input
+        before the DAC, the output after the ADC - which is what those
+        functions already mean by a reference of None.
+    ``contributions``
+        Whether the noise sweep is shown broken down per source.
+
+    Every field is validated here, and a plane has to resolve in *this* chain,
+    because a record that quietly holds a value nothing can use is the failure
+    this file format exists to prevent. An unknown field is refused rather than
+    ignored, so a typo is not a default that silently never applied.
+    """
+    _set_analysis(defaults)
+    return _describe()
+
+
+def _set_analysis(defaults: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    :func:`set_analysis` without the error-to-data wrapper, for callers inside
+    this module that need a bad operating point to raise - a preset carrying
+    one is a bug here, not a message for a view.
+    """
+    if defaults is None:
+        defaults = {}
+    if not isinstance(defaults, dict):
+        raise TypeError(f"the operating point must be an object, got "
+                        f"{type(defaults).__name__}")
+    unknown = sorted(set(defaults) - set(_ANALYSIS_FIELDS))
+    if unknown:
+        raise ValueError(f"unknown field {unknown[0]!r}; the operating point "
+                         f"holds {sorted(_ANALYSIS_FIELDS)}")
+
+    stored: Dict[str, Any] = {}
+    for field, check in _ANALYSIS_FIELDS.items():
+        if field not in defaults:
+            continue
+        value = check(defaults[field], field)
+        # A `plane` of None says nothing that leaving the field out does not,
+        # and the two must not be different ways to write the same record.
+        if field == "plane" and value is None:
+            continue
+        stored[field] = value
+    _gain_span_planes(stored)
+
+    metadata = dict(_CHAIN.metadata)
+    if stored:
+        metadata[ANALYSIS_METADATA_KEY] = stored
+    else:
+        metadata.pop(ANALYSIS_METADATA_KEY, None)
+    _CHAIN.metadata = metadata
+    return stored
+
+
+def _resolved_analysis() -> tuple:
+    """
+    The operating point to actually use, as ``(point, ignored)``.
+
+    ``point`` has every field: what the chain stores, with this build's
+    fallbacks for whatever it does not. ``ignored`` is the stored fields that no
+    longer fit the chain - a plane whose stage has since been renamed or
+    removed - each as a sentence, because a default that quietly stopped
+    applying is exactly the thing a saved record must not do without saying so.
+
+    Checked with the same table :func:`set_analysis` writes through, so nothing
+    can be resolved that could not have been stored.
+    """
+    stored = _stored_analysis()
+    point: Dict[str, Any] = copy.deepcopy(_ANALYSIS_FALLBACK)
+    point.update({field: None for field in _ANALYSIS_PLANE_FIELDS})
+    ignored: List[str] = []
+    for field, check in _ANALYSIS_FIELDS.items():
+        if field not in stored:
+            continue
+        try:
+            point[field] = check(stored[field], field)
+        except Exception as exc:                  # noqa: BLE001 - reported below
+            ignored.append(f"the chain's saved {field} no longer applies to "
+                           f"it, so it was not used ({exc})")
+    try:
+        _gain_span_planes(point)
+    except Exception as exc:                      # noqa: BLE001 - reported below
+        point["gain_from"] = point["gain_to"] = None
+        ignored.append(f"the chain's saved gain span planes were not used "
+                       f"({exc})")
+    return point, ignored
+
+
+@_guard
+def analysis() -> Dict[str, Any]:
+    """
+    The chain's operating point, both as saved and as it will be used.
+
+    ``stored`` is what is in the file - only the fields the chain actually
+    states, so a caller with its own default for a field can tell "the chain
+    says 1.5 GHz" from "the chain says nothing". ``resolved`` is every field
+    with this build's fallbacks filled in, which is what :func:`notebook` runs
+    on. ``ignored`` names any stored field that no longer fits the chain.
+    """
+    point, ignored = _resolved_analysis()
+    return {"stored": _stored_analysis(), "resolved": point,
+            "ignored": ignored}
 
 
 # --------------------------------------------------------------------------
@@ -1099,11 +1410,13 @@ def to_json(indent: int = 2) -> Dict[str, Any]:
 
 
 @_guard
-def notebook(carrier_hz: float = 1.5e9, spectral_hz: float = 1.0e3,
-             reference: Optional[Any] = None, at: str = "input",
-             gain_start_hz: float = 1.0e8, gain_stop_hz: float = 3.0e9,
-             spectral_start_hz: float = 1.0e-2,
-             spectral_stop_hz: float = 1.0e3,
+def notebook(carrier_hz: Optional[float] = None,
+             spectral_hz: Optional[float] = None,
+             reference: Optional[Any] = None, at: Optional[str] = None,
+             gain_start_hz: Optional[float] = None,
+             gain_stop_hz: Optional[float] = None,
+             spectral_start_hz: Optional[float] = None,
+             spectral_stop_hz: Optional[float] = None,
              source_root: str = "") -> Dict[str, Any]:
     """
     A notebook that analyses the current chain, as ``.ipynb`` text.
@@ -1113,6 +1426,12 @@ def notebook(carrier_hz: float = 1.5e9, spectral_hz: float = 1.0e3,
     operating point - the plane a budget is being read at, the spans the plots
     are showing - so the notebook opens on the values that were on screen when
     it was asked for rather than on a set of defaults nobody chose.
+
+    Omitting one falls back to the chain's own stored operating point (see
+    :func:`set_analysis`), and then to this build's default. So a view passes
+    what it is showing, while ``chain_api.notebook()`` from a script opens
+    where the chain itself says it should be read - the two agree, because a
+    view that loaded the chain started from those same values.
 
     Only the document is generated here; every number in it is computed when it
     runs, by these same modules. That is the same rule the browser follows, for
@@ -1124,14 +1443,27 @@ def notebook(carrier_hz: float = 1.5e9, spectral_hz: float = 1.0e3,
     its first cell in any kernel that has not installed it; the browser build
     passes the directory it was assembled from, and a script can pass its own.
     """
+    point, _ignored = _resolved_analysis()
+    if reference is None and point["plane"] is not None:
+        reference = point["plane"]["reference"]
+        if at is None:
+            at = point["plane"]["at"]
+    gain_span = (
+        point["gain_span_hz"][0] if gain_start_hz is None else float(gain_start_hz),
+        point["gain_span_hz"][1] if gain_stop_hz is None else float(gain_stop_hz),
+    )
+    spectral_span = (
+        point["noise_span_hz"][0] if spectral_start_hz is None else float(spectral_start_hz),
+        point["noise_span_hz"][1] if spectral_stop_hz is None else float(spectral_stop_hz),
+    )
     document = notebook_export.build(
         _CHAIN,
         chain_json=json.dumps(_CHAIN.to_dict(), indent=2),
         chain_filename=_suggested_filename(_CHAIN.name),
-        carrier_hz=float(carrier_hz), spectral_hz=float(spectral_hz),
-        reference=reference, at=at,
-        gain_span_hz=(float(gain_start_hz), float(gain_stop_hz)),
-        spectral_span_hz=(float(spectral_start_hz), float(spectral_stop_hz)),
+        carrier_hz=point["carrier_hz"] if carrier_hz is None else float(carrier_hz),
+        spectral_hz=point["spectral_hz"] if spectral_hz is None else float(spectral_hz),
+        reference=reference, at="input" if at is None else at,
+        gain_span_hz=gain_span, spectral_span_hz=spectral_span,
         generated_by=_generated_by(), source_root=str(source_root or ""),
     )
     stem = _suggested_filename(_CHAIN.name)[:-len(".json")]
@@ -1169,7 +1501,12 @@ def from_json(text: str) -> Dict[str, Any]:
     global _CHAIN
     _CHAIN = SignalChain.from_dict(json.loads(text))
     result = _describe()
-    result["load_warnings"] = list(_CHAIN.load_warnings)
+    # A stored operating point that no longer fits the chain it was saved on -
+    # a budget plane naming a stage that failed to load - is the same kind of
+    # thing: something the file said that is not being acted on. It belongs in
+    # the same list rather than in a second channel a view might not read.
+    _point, ignored = _resolved_analysis()
+    result["load_warnings"] = list(_CHAIN.load_warnings) + ignored
     return result
 
 

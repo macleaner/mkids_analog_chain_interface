@@ -22,6 +22,20 @@ from utils import to_dbm, to_W
 #: Bumped when the on-disk layout changes in a way that needs migration.
 FORMAT_VERSION = 2
 
+#: The one key in a chain's free-form ``metadata`` that this repo reserves for
+#: itself: the operating point the chain is normally read at - the carrier the
+#: noise is quoted for, the spans the sweeps run over, the plane the budget is
+#: referred to. See :func:`chain_api.set_analysis` for the fields and
+#: ``README.md`` for why it lives in metadata rather than beside it: metadata
+#: round-trips verbatim through every reader this format has ever had, so a
+#: chain saved with an operating point still loads in an older build, and comes
+#: back out of it unchanged.
+#:
+#: Nothing here reads it - it is a default for whatever asks, not an input to
+#: the cascade - so a chain carrying a nonsensical one still computes exactly
+#: what its components say. It is validated where it is written instead.
+ANALYSIS_METADATA_KEY = "analysis"
+
 
 def _evaluate_noise(component, carrier_frequency, spectral_frequency):
     """

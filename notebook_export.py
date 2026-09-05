@@ -37,6 +37,7 @@ import json
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import registry
+from signal_chain import ANALYSIS_METADATA_KEY
 
 #: What to tell someone whose kernel cannot import the core modules, once every
 #: route the notebook can try itself has failed. It does not offer
@@ -287,7 +288,10 @@ the version installed in *this* kernel.
 *carrier* is the RF tone probing the system (MHz–GHz) and sets noise *levels*;
 the *spectral* frequency is the offset from that carrier (Hz–MHz) and sets the
 noise *shape*. Every noise call takes both. The values below are the ones the
-GUI was set to.
+GUI was set to — which is where the chain itself says it should be read, when it
+carries an operating point of its own in `metadata["{ANALYSIS_METADATA_KEY}"]`.
+Every section below refers to them by name, so changing one here and rerunning
+moves all of it; the two sweep spans are literals in their own cells.
 """))
 
     # ---- setup ----------------------------------------------------------
@@ -397,7 +401,15 @@ for warning in chain.load_warnings:
 
 print(f"analysing {source}")
 print(f"file format:  v{raw.get('format_version')}   saved {raw.get('saved_utc')}")
-print(f"metadata:     {chain.metadata or '(none)'}")
+
+# The chain's own operating point sits in its metadata under this one reserved
+# key. It is where the constants in the next cell came from rather than a note
+# about the hardware, so it is printed apart from the bookkeeping fields.
+ANALYSIS_KEY = """ + _literal(ANALYSIS_METADATA_KEY) + """
+saved_point = chain.metadata.get(ANALYSIS_KEY)
+notes = {k: v for k, v in chain.metadata.items() if k != ANALYSIS_KEY}
+print(f"metadata:     {notes or '(none)'}")
+print(f"read at:      {saved_point or '(nothing saved with the chain)'}")
 chain.summary()
 """))
 
