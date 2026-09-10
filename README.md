@@ -54,6 +54,9 @@ A Python tool for modeling and analyzing RF analog signal chains, with support f
 - `FilterHP_VHF1320p`, `FilterHP_VHF1760p`, `FilterHP_VHF1910p`,
   `FilterHP_VHF5050p`: High-pass filters
 - `FilterLP_VLF6700p`, `FilterLP_VLFG2000p`: Low-pass filters
+- `LNF_C4_12A`: LNF 4-12 GHz cryogenic dual junction isolator/circulator, as
+  its insertion loss and nothing else — a linear cascade has nowhere to put
+  the isolation the part is bought for
 
 #### Converters
 - `AD9082_DAC`, `AD9082_ADC`: the modelled part — a fitted phase-noise skirt at

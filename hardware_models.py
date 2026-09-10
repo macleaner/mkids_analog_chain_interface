@@ -810,6 +810,11 @@ class _InterpolatedFilter(_DatasheetSpan, PassiveComponent):
     """
     Shared implementation for the fixed filter models, high- and low-pass alike.
 
+    Also serves any other fixed passive whose whole model is one tabulated
+    insertion loss with no parameters - the LNF circulator at the end of this
+    file - since the clamp below is a statement about passive loss rather than
+    about filtering. The name is the majority case, not the contract.
+
     ``response`` is the datasheet's tabulated insertion loss, negated into gain.
     Beyond the tabulated span the endpoint slope is extended, so a chain
     evaluated where the datasheet is silent gets a usable estimate rather than a
@@ -1391,3 +1396,92 @@ class SMA_RG316_cables(_FormulaCable):
     atten_a = 0.7727
     atten_b = 0.0972
     datasheet_fmax_ghz = 3.0
+
+
+@register("circulator.lnf_c4_12a", category="Circulators",
+          label="LNF-xxxxC4_12A (4-12 GHz cryo)")
+class LNF_C4_12A(_InterpolatedFilter):
+    """
+    Low Noise Factory LNF-xxxxC4_12A, 4-12 GHz cryogenic dual junction
+    isolator/circulator, modelled as its insertion loss and nothing else.
+
+    One model covers the whole family. The ``xxxx`` is the order code -
+    ISIS, CICI, ISCI or CIIS, for dual isolator, dual circulator and the two
+    mixed pairs - and the four share this datasheet, one chassis and one
+    insertion-loss chart, so there is nothing here to tell them apart by.
+
+    Insertion loss only, by intent. Absent, and on the datasheet if you need
+    them: the 30 dB isolation and the direction it runs in, the 16 dB port
+    match, the third port, the internal magnet's stray field (<4 Gauss at 6 mm,
+    <0.1 with the optional shield) and the 650/1500 Gauss external field the
+    part tolerates before its band edge shifts, the 30 dBm drive limit and the
+    +-50 V DC rating. Most of that is unrepresentable rather than merely
+    omitted: a SignalChain is a linear one-way cascade, so there is nowhere in
+    it to put the non-reciprocity that is the entire reason to fit one of
+    these. This model says what the signal loses going the way it is meant to.
+
+    The numbers are the datasheet's "Insertion Loss of 5 Units at 77 K" chart,
+    which is drawn as vector art rather than as an image, so its five polylines
+    are the plotted samples themselves - 201 points each, 3 to 13 GHz in 50 MHz
+    steps - recovered from the page rather than read off it by eye. The plot
+    frame supplies the calibration, 3 and 13 GHz at its left and right edges
+    and 0.0 and -2.0 dB at its top and bottom, each checked against where the
+    printed tick label sits. The five units are then averaged at each
+    frequency, in dB as with the splitter arms. Averaging in power instead
+    moves nothing through the band by 0.01 dB - but the two do diverge in the
+    roll-off, by 3 dB at 12.95 GHz, which is the arithmetic noticing what the
+    spread below says outright: past 12.2 GHz there is no typical unit to
+    average towards, and a mean of five parts that have stopped agreeing is
+    not a measurement of anything.
+
+    That average comes to 0.38 dB over 4-12 GHz against the specification
+    table's "0.4 dB typical", which is the cross-check that the chart was read
+    correctly - and also the last point at which the headline figure describes
+    the part. The loss is 0.9 dB at the 4 GHz corner, falls to 0.18 dB at
+    7 GHz, and is back to 0.4 dB by 12 GHz; a chain that puts this at the
+    bottom of its band pays more than twice what the front page quotes.
+
+    Unit to unit the five agree to about 0.15 dB through the band, which is the
+    other reason to average them. They stop agreeing above roughly 12.2 GHz,
+    where their band edges part company: at 12.5 GHz they span 0.57 to 2.73 dB.
+    The mean is carried there for continuity into the roll-off but it describes
+    no particular unit, and a chain working the top 300 MHz of this band wants
+    a measurement of its own device rather than this curve.
+
+    The table runs out to 3 and 13 GHz, past the specified band at both ends,
+    because the chart's samples do - they are plotted below its -2 dB axis
+    floor, clipped out of the picture but present in the drawing, so the two
+    roll-offs come out with the rest and the model reaches its band edges with
+    a measured skirt instead of an extrapolated one.
+
+    Measured at 77 K, and modelled there. The datasheet says only that
+    insertion loss "improves slightly when cooled to 5 K and 10 mK" without
+    quantifying it, so a chain at millikelvin gets the pessimistic end of the
+    part's range; there is no temperature parameter here to say otherwise.
+
+    Contributes no noise, in common with every passive here but ``Attenuator``:
+    nothing turns this loss into the thermal contribution it physically makes.
+    That gap is worth more here than in a warm filter, since the part exists to
+    sit at the cold stage immediately around an LNA, where a few tenths of a dB
+    is being spent precisely because it is cheap in noise temperature there -
+    and this model prices the loss while ignoring what it buys.
+
+    Source: component_references/lnf-xxxxc4_12a.pdf, dated 2022-05-02.
+    """
+
+    response = (
+        1e9 * np.asarray(
+            [3.0, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9,
+             4.0, 4.25, 4.5, 4.75, 5.0, 5.25, 5.5, 5.75, 6.0, 6.25,
+             6.5, 6.75, 7.0, 7.25, 7.5, 7.75, 8.0, 8.25, 8.5, 8.75,
+             9.0, 9.25, 9.5, 9.75, 10.0, 10.25, 10.5, 10.75, 11.0, 11.25,
+             11.5, 11.75, 12.0, 12.1, 12.2, 12.3, 12.4, 12.5, 12.6, 12.7,
+             12.8, 12.9, 13.0]),
+        np.asarray(
+            [-18.56, -14.94, -10.83, -7.20, -4.56, -2.87, -1.95, -1.46, -1.17,
+             -1.02, -0.93, -0.85, -0.72, -0.52, -0.37, -0.40, -0.55, -0.69,
+             -0.68, -0.55, -0.36, -0.23, -0.18, -0.22, -0.24, -0.29, -0.27,
+             -0.22, -0.20, -0.26, -0.28, -0.31, -0.35, -0.40, -0.35, -0.34,
+             -0.32, -0.27, -0.26, -0.27, -0.31, -0.37, -0.39, -0.42, -0.51,
+             -0.69, -0.98, -1.46, -2.10, -2.98, -5.76, -11.54, -17.67]),
+    )

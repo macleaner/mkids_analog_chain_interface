@@ -43,6 +43,7 @@ TABULATED = {
     "filter.vlf6700p": {},
     "filter.vlfg2000p": {},
     "splitter.zn4pd_4r722_plus": {},
+    "circulator.lnf_c4_12a": {},
     "cable.sma_generic": {"length_m": 1.0},
     "cable.fm_f141": {"length_m": 1.0},
     "cable.rg58c": {"length_m": 1.0},

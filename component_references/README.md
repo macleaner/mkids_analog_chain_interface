@@ -22,6 +22,7 @@ path and date rather than copied here.
 | `CITCRYO1-12D_Technical_DataSheet_04.13.26.pdf` | CMT CITCRYO1-12D cryogenic LNA | `CMT_CITCRYO1_12D` | Rev. 04/13/2026 | 2026-09-03 |
 | `lnf-lnc0-3_14b.pdf` | Low Noise Factory LNC0.3_14B | `LNF_LNC0_3_14B` | dated 2023-02-24 | 2026-09-03 |
 | `lnf-lnc1-5_6b.pdf` | Low Noise Factory LNC1.5_6B | `LNF_LNC1_5_6B` | dated 2023-02-23 | 2026-09-03 |
+| `lnf-xxxxc4_12a.pdf` | Low Noise Factory LNF-xxxxC4_12A cryogenic isolator/circulator | `LNF_C4_12A` | dated 2022-05-02 | 2026-09-10 |
 | `RG316-SMAcable-HUBERSUHNERRG316UDataSheet.pdf` | HUBER+SUHNER RG316/U coax | `SMA_RG316_cables` | DOC-0000177782, 2020-10-14 | 2026-09-03 |
 | `VHF-5050+.pdf` | Mini-Circuits VHF-5050+ high pass | `FilterHP_VHF5050p` | REV. B | 2026-08-28 |
 | `VLF-6700+.pdf` | Mini-Circuits VLF-6700+ low pass | `FilterLP_VLF6700p` | (unmarked) | 2026-08-28 |
@@ -42,6 +43,7 @@ above before concluding a model disagrees with its source.
 588648afebacaa4f1a9f43e256a8ae8c88d95b8e243083beaccc25426605a0a2  CITCRYO1-12D_Technical_DataSheet_04.13.26.pdf
 357e96ba8f26b8e9cc8ba437f8ac871410bff5098e3f2c42ae59bac734c791b5  lnf-lnc0-3_14b.pdf
 a00b61e2fb304f22fe46eb062c326222be191801a5146e678fe793e2cc2df2b4  lnf-lnc1-5_6b.pdf
+9a2e48c414e891a519b22a35e64722f1360f5a91dc4b604719187ae33db8e8ac  lnf-xxxxc4_12a.pdf
 2fb12f580e6b30683fb0717ba493faaf307a5901cfd579e144365ca46266c664  RG316-SMAcable-HUBERSUHNERRG316UDataSheet.pdf
 81e25337f96fa20aec016a474bbad1884d726982479b126a04bb964229a6fd76  VHF-5050+.pdf
 e9e5a9a8f9e5d6e240a02ee54feaf3b2abc02d3ceacbeec0bacc613b170b5e90  VLF-6700+.pdf
@@ -61,6 +63,36 @@ amplitude and phase unbalance between arms, the isolation between outputs, the
 fact that a combiner sums four inputs rather than dividing one, the 30 W rating
 and the DC-pass path. A chain that turns on any of those is not one this model
 belongs in.
+
+**`LNF-xxxxC4_12A`** is in the library as its insertion loss and nothing else,
+which was the scope it was added under and is also most of what a cascade can
+take. The datasheet's other three headline numbers - 30 dB isolation, 16 dB
+port match, the third port - describe a non-reciprocal three-port, and
+`SignalChain` is a linear one-way cascade with no way to express any of it. So
+the model prices the loss the signal pays going the intended way and is silent
+on the isolation that loss is bought for. Also absent: the internal magnet's
+stray field, the external field the part tolerates, the 30 dBm drive limit and
+the DC rating.
+
+One model covers all four order codes. `ISIS`, `CICI`, `ISCI` and `CIIS` -
+dual isolator, dual circulator and the two mixed pairs - share this datasheet
+and its single insertion-loss chart, so nothing in the document distinguishes
+them here.
+
+Its numbers are digitised rather than transcribed, the only ones in the library
+that are. There is no insertion-loss table on this datasheet, only the
+"Insertion Loss of 5 Units at 77 K" chart and a single "0.4 dB typical" in the
+specification table. The chart is vector art, though, so the five traces are
+the plotted samples exactly - 201 points each, 3 to 13 GHz in 50 MHz steps -
+and the model carries their mean, calibrated on the plot frame against the
+printed tick labels. Recovering it needs the drawing operators rather than a
+text extractor: `mutool trace lnf-xxxxc4_12a.pdf 2` prints them. The 4-12 GHz
+mean of what came out is 0.38 dB against the front page's 0.4 dB typical, which
+is the check that it was read correctly. Two things follow that a transcribed
+table would not need saying: the digitisation is only as good as that
+calibration, and the 77 K measured curve is the only one - the datasheet says
+insertion loss "improves slightly" at 5 K and 10 mK without saying by how much,
+so a millikelvin chain is being quoted the warm end of the part's range.
 
 **`VLFG-2000+`** is modelled from the +25 °C column alone. Its performance table
 is the only one here published at three temperatures, -55 °C, +25 °C and
