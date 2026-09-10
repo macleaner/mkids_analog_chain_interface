@@ -22,7 +22,7 @@ This project is based on the analog chain hardware models in `hidfmux`. For the 
 
 ## Quick start
 
-From the repository root, choose one of the environment options below. The project requires Python 3.9 or newer; the uv and Miniconda examples select Python 3.12. The commands use a Unix-style shell. **Windows has not been tested**; it may work, but these instructions do not establish Windows support.
+Set up an environment, install the menu entry once, then launch **Analog Chain Calculator** from your start menu. From the repository root, choose one of the environment options below. The project requires Python 3.9 or newer; the uv and Miniconda examples select Python 3.12. The commands use a Unix-style shell. **Windows has not been tested**; it may work, but these instructions do not establish Windows support.
 
 ### Option 1: Python venv
 
@@ -30,7 +30,6 @@ From the repository root, choose one of the environment options below. The proje
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python open_web_gui.py
 ```
 
 ### Option 2: uv
@@ -40,7 +39,6 @@ With [uv](https://docs.astral.sh/uv/pip/environments/) installed:
 ```bash
 uv venv --python 3.12 --seed
 source .venv/bin/activate
-python open_web_gui.py
 ```
 
 `--seed` includes `pip`, which the launcher invokes to build the core wheel. Keep it even if you use `uv pip` for other package installs.
@@ -52,22 +50,25 @@ With Miniconda installed and `conda` initialized in your shell, create a dedicat
 ```bash
 conda create -n analog-chain python=3.12 pip
 conda activate analog-chain
-python open_web_gui.py
 ```
 
-### Launching the calculator
+### Install once, launch from the start menu
 
-The launcher builds the core wheel and assembles `dist/analog_chain_calculator.html` when needed, then opens it in your browser. The page needs no application server. It downloads Pyodide and its Python dependencies from a CDN; **network access is required on first load**. Subsequent loads may use the browser cache. A fully offline bundle is not implemented.
-
-Other launcher options:
+With your chosen environment active, run this once from the repository root on Linux:
 
 ```bash
-python open_web_gui.py --no-open   # Build and print the HTML path
-python open_web_gui.py --force     # Rebuild the wheel and page
-python open_web_gui.py --desktop   # Install a Linux applications-menu entry
+python open_web_gui.py --desktop
 ```
 
-See [the browser guide](web/README.md) for manual build commands and UI details.
+**Then open your applications/start menu, search for “Analog Chain Calculator”, and click it.** Use that menu entry whenever you want to open the calculator; there is no need to return to the terminal.
+
+![Linux start menu with Analog Chain Calculator selected in the search results](docs/images/analog-chain-start-menu.png)
+
+*Search for Analog Chain Calculator in the start menu and click the highlighted application.*
+
+The menu launcher builds or updates the browser calculator when needed and opens it in your browser. **Network access is required on first launch** to download the Python runtime and dependencies. Subsequent loads may use the browser cache; a fully offline bundle is not implemented.
+
+See [the browser guide](web/README.md) for build details.
 
 ## Using the browser
 
