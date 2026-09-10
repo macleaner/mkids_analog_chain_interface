@@ -4,6 +4,8 @@ Build an RF signal chain, inspect its gain across a frequency band, and identify
 
 The browser runs the same Python models as scripts and notebooks through Pyodide. Chains are saved as JSON so a design can move between the interactive editor, a Jupyter notebook, and measurement analysis.
 
+This project is based on the analog chain hardware models in `hidfmux`. For the original work and background, see [the project author's thesis (McGill University, PDF)](https://mcgill.scholaris.ca/bitstreams/aaa1cb7b-afb7-40b8-89f5-530e4c294c4a/download).
+
 ![RF Analog Chain Calculator showing the component library, an RF chain, an LNA-referred noise budget, and gain and noise plots](docs/images/analog-chain-calculator.png)
 
 *Example browser session with Nyquist filters, cryogenic attenuation, amplifiers, and converters. The lower panels show gain versus carrier frequency and noise versus spectral offset.*
@@ -20,7 +22,9 @@ The browser runs the same Python models as scripts and notebooks through Pyodide
 
 ## Quick start
 
-From a checkout, use Python 3.9 or newer with `pip` available:
+From the repository root, choose one of the environment options below. The project requires Python 3.9 or newer; the uv and Miniconda examples select Python 3.12. The commands use a Unix-style shell. **Windows has not been tested**; it may work, but these instructions do not establish Windows support.
+
+### Option 1: Python venv
 
 ```bash
 python -m venv .venv
@@ -29,7 +33,29 @@ python -m pip install --upgrade pip
 python open_web_gui.py
 ```
 
-On Windows, activate the environment with `.venv\Scripts\activate` instead.
+### Option 2: uv
+
+With [uv](https://docs.astral.sh/uv/pip/environments/) installed:
+
+```bash
+uv venv --python 3.12 --seed
+source .venv/bin/activate
+python open_web_gui.py
+```
+
+`--seed` includes `pip`, which the launcher invokes to build the core wheel. Keep it even if you use `uv pip` for other package installs.
+
+### Option 3: Miniconda
+
+With Miniconda installed and `conda` initialized in your shell, create a dedicated [Conda environment](https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html):
+
+```bash
+conda create -n analog-chain python=3.12 pip
+conda activate analog-chain
+python open_web_gui.py
+```
+
+### Launching the calculator
 
 The launcher builds the core wheel and assembles `dist/analog_chain_calculator.html` when needed, then opens it in your browser. The page needs no application server. It downloads Pyodide and its Python dependencies from a CDN; **network access is required on first load**. Subsequent loads may use the browser cache. A fully offline bundle is not implemented.
 
@@ -52,89 +78,17 @@ See [the browser guide](web/README.md) for manual build commands and UI details.
 5. Click the chain name to edit its name and notes. **save the current view** records the operating point for reopening the chain; changing plot controls alone does not save it.
 6. Use **download chain.json** to save the chain or **notebook.ipynb** to continue the analysis in Jupyter. The **Chain file** tab previews the serialized record.
 
-The generated notebook embeds the chain that was on screen. Running it requires a local checkout or installation of the core, plus matplotlib for plotting.
+## Continue in a notebook
 
-## Python and notebooks
+Click **notebook.ipynb** in the browser to download a Jupyter notebook for your current chain and analysis settings. It includes:
 
-Install the core from this checkout; its declared dependencies are NumPy and SciPy:
+- Gain and noise plots, including noise referred to your selected plane.
+- A per-source noise budget and CSV export.
+- An example of changing a component parameter and comparing the results, when applicable.
 
-```bash
-python -m pip install -e .
-python -m pip install matplotlib jupyterlab
-```
+The chain is embedded in the notebook, alongside the code and instructions to continue the analysis. Open it in Jupyter and follow its setup instructions; you will need a local checkout or installation of the core and matplotlib for plotting.
 
-The distribution is named `analog-chain-core`; its imports are top-level modules such as `signal_chain` and `hardware_models`. Matplotlib and Jupyter are optional for the core, but needed for the plotting and notebook workflows below.
-
-### Build and analyze a chain
-
-Run this example from the repository root:
-
-```python
-from hardware_models import ASU_3GHz_LNA, Attenuator, SMA_SS086_cryo
-from signal_chain import SignalChain
-
-chain = SignalChain(
-    name="Cryogenic readout",
-    description="Example feedline with a cold cable and LNA",
-    metadata={"cooldown": "CD-17"},
-)
-chain.add_component(Attenuator(-10.0, 300.0), label="InputAtten")
-chain.add_component(SMA_SS086_cryo(0.5, temperature=4.0), label="CryoCable")
-chain.add_component(ASU_3GHz_LNA(), label="LNA")
-
-carrier_hz = 1.5e9
-spectral_hz = 1.0e3
-print(f"Total gain: {chain.total_gain(carrier_hz):.2f} dB")
-print(f"Output noise: {chain.output_noise(carrier_hz, spectral_hz):.3e} W/Hz")
-
-budget = chain.noise_budget("LNA", carrier_hz, spectral_hz, at="input")
-print(budget.table())
-
-chain.save("cryogenic_readout.json")
-restored = SignalChain.load("cryogenic_readout.json")
-for warning in restored.load_warnings:
-    print(f"Load warning: {warning}")
-```
-
-For converter noise, attach models with `chain.set_digitizer(dac, adc)`. The library includes AD9082 models and configurable `GenericDAC` / `GenericADC` models; the generic models also support `noiseless=True` for evaluating the analog components alone.
-
-To generate a diagram from a checkout:
-
-```python
-from diagram_generator import DiagramGenerator
-
-DiagramGenerator(chain).generate(
-    "cryogenic_readout.pdf", frequency=carrier_hz, show_gain=True
-)
-```
-
-`diagram_generator.py` is a repository utility and is excluded from the core wheel.
-
-### Start from an existing chain
-
-- [Notebook walkthrough](examples/analog_chain_walkthrough.ipynb): loading JSON, gain/noise sweeps, reference-plane budgets, and editing components.
-- [Simple cryogenic chain](examples/simple_cryogenic_system.json): a saved chain for the walkthrough or browser.
-- [PNNL 5 GHz example](examples/example_pnnl_5ghz.json): another saved RF chain.
-- [Python example](examples/simple_example.py): analysis and PDF diagram generation.
-
-```bash
-jupyter lab examples/analog_chain_walkthrough.ipynb
-python examples/simple_example.py
-```
-
-For a JSON-friendly scripting interface, `chain_api.py` exposes the same operations used by the browser:
-
-```python
-import chain_api
-
-chain_api.load_preset("cryo_example")
-result = chain_api.budget("LNA", at="input", carrier_hz=1.5e9, spectral_hz=1e3)
-if not result["ok"]:
-    raise RuntimeError(result["error"])
-print(result)
-```
-
-This API operates on one active chain and returns JSON-safe dictionaries, including `{"ok": false, "error": ...}` on failure. Use separate `SignalChain` instances when working with multiple chains at once.
+For a guided example, see the [notebook walkthrough](examples/analog_chain_walkthrough.ipynb). Saved chains to try in the browser are in [examples](examples/).
 
 ## Interpreting results
 
