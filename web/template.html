@@ -454,6 +454,11 @@ this page's plots and table over it — open it in Jupyter">notebook.ipynb</butt
       <div class="ctl"><label>span (GHz)</label>
         <span style="display:flex;gap:5px">
           <input id="g0" value="0.1"><input id="g1" value="3.0"></span></div>
+      <!-- Per *stage*, where the noise plot says per source: every stage in
+           the span is drawn, including the ones sitting at 0 dB, whereas a
+           stage with no noise has no contribution to appear as. -->
+      <div class="ctl"><label>per-stage breakdown</label>
+        <button id="btnGainContrib">off</button></div>
       <div id="pgain"></div>
     </div>
     <div class="plot">
@@ -528,7 +533,8 @@ let libSelected = null;       // type_id whose specs the panel is showing
 let dragFrom = null;          // component_index being dragged, or null
 let unitCol = 'contribution_dBm_per_hz';
 let activePane = 'paneBudget';  // which of the third column's two tabs is up
-let showContrib = false;
+let showContrib = false;        // the noise plot's, per source
+let showGainContrib = false;    // the gain plot's, per stage
 let gainPlot = null, noisePlot = null;
 
 const $ = id => document.getElementById(id);
@@ -972,6 +978,7 @@ function currentPoint(){
     gain_span_hz: [num($('g0').value) * 1e9, num($('g1').value) * 1e9],
     gain_from: planePair('gfrom'),
     gain_to: planePair('gto'),
+    gain_contributions: showGainContrib,
     noise_span_hz: [num($('n0').value), num($('n1').value)],
     noise_plane: planePair('nplane'),
     contributions: showContrib,
@@ -993,6 +1000,8 @@ function pointReading(point){
   if ('gain_from' in point || 'gain_to' in point)
     parts.push(`gain ${point.gain_from ? plane(point.gain_from) : 'chain input'}`
              + ` → ${point.gain_to ? plane(point.gain_to) : 'chain output'}`);
+  if ('gain_contributions' in point && point.gain_contributions)
+    parts.push('per stage');
   if ('noise_span_hz' in point)
     parts.push(`noise ${fmtPoint(point.noise_span_hz[0])}–${fmtPoint(point.noise_span_hz[1])}`);
   if ('noise_plane' in point)
@@ -1060,6 +1069,7 @@ function applyPoint(){
     $('n0').value = point.noise_span_hz[0];
     $('n1').value = point.noise_span_hz[1];
   }
+  if ('gain_contributions' in point) setGainContrib(point.gain_contributions);
   if ('contributions' in point) setContrib(point.contributions);
   pendingPlanes = point;
 }
@@ -1629,13 +1639,22 @@ const labelBand = axis => Math.round(LABEL_PX * (axis === 'y' ? 2.4 : 2));
 const SERIES_COLORS = ['#d9a441','#6f9ceb','#68c2a3','#e0655f','#b78bd8',
                        '#dba36a','#7fc4d8','#c9d06a'];
 
+/* The colour of the i-th curve drawn against a total. The first palette entry
+   is the total's own gold, so these cycle over what is left rather than over
+   the whole palette: a chain with more stages than colours would otherwise
+   hand one of them the colour the total is drawn in, and the total is the one
+   curve a reader has to be able to pick out. Two stages sharing a colour
+   further down the list is a legend to read; a stage wearing the total's is a
+   curve read as the wrong thing. */
+const seriesColor = i => SERIES_COLORS[1 + (i % (SERIES_COLORS.length - 1))];
+
 const PLOT_MIN = 100;                   // the shortest curve worth drawing
 
 /* What a plot box spends on everything that is not the curve. The legend is
    part of it: the height uPlot is given is the plotting area alone, and the
    legend is drawn under that - so it has to be measured rather than assumed
-   away, and it is not a constant either, since the noise plot's legend wraps to
-   a second row once the per-source breakdown is on. */
+   away, and it is not a constant either, since either plot's legend wraps to a
+   second row once its breakdown is on. */
 function plotChrome(hostId){
   const host = $(hostId), box = host.closest('.plot');
   const legend = host.querySelector('.u-legend');
@@ -1664,8 +1683,8 @@ function plotSize(hostId){
    is the taller of the two boxes' chrome plus the shortest curve worth drawing,
    plus what the row spends outside the boxes. So a control added to a plot box,
    or a larger --fs, raises the floor instead of quietly costing the curves their
-   height - and the legend wrapping to a second row when the breakdown goes on
-   does the same. */
+   height - and either legend wrapping to a second row when its breakdown goes
+   on does the same. */
 function plotsFloor(){
   const box = $('pgain').closest('.plot');
   const outside = $('plots').getBoundingClientRect().height
@@ -1749,6 +1768,14 @@ function shadePlugin(bands, first){
   }}};
 }
 
+/* What the caption says about the stage curves, once they are drawn. Worth
+   saying because the arithmetic is not the noise plot's: there the sources add
+   in power and the total sits above every one of them, here they add in dB and
+   a loss pulls the total below. */
+const STAGE_NOTE = 'Each stage in the span is drawn as well. Gain adds in dB '
+  + 'along the chain, so those curves sum to the total rather than sitting '
+  + 'under it — click a legend entry to hide one. ';
+
 /* What the caption says about the lanes, whichever span is drawn. */
 const LANE_NOTE = 'A shaded lane marks a stage that is outside its datasheet '
   + 'over those frequencies: its gain there is extended from the measured '
@@ -1763,7 +1790,8 @@ function renderGain(){
   const to = JSON.parse($('gto').value || 'null');
   const result = call('sweep_gain', start, stop, 401, false,
                       from ? from[0] : null, from ? from[1] : 'input',
-                      to ? to[0] : null, to ? to[1] : 'output');
+                      to ? to[0] : null, to ? to[1] : 'output',
+                      showGainContrib);
 
   // The whole path keeps the name it has everywhere else. A shorter span is
   // named by its two planes, because "gain" alone would not say which stages -
@@ -1775,7 +1803,8 @@ function renderGain(){
   $('gcap').title = (result.stage_labels.length
     ? `Summed over ${result.stage_labels.join(' → ')}. `
     : 'These are the same plane, so nothing lies between them and the gain '
-      + 'is 0 dB. ') + LANE_NOTE;
+      + 'is 0 dB. ')
+    + (showGainContrib ? STAGE_NOTE : '') + LANE_NOTE;
 
   const ghz = result.freq_hz.map(f => f / 1e9);   // axis label only, not a result
   const data = [ghz, result.gain_db];
@@ -1784,11 +1813,29 @@ function renderGain(){
                    stroke:'#d9a441', width:1.6,
                    value:(u,v)=>v==null?'—':v.toFixed(2)}];
 
+  // One dashed curve per stage in the span, in signal order. Python sends them
+  // only when the breakdown is on, so `series` is empty otherwise and this adds
+  // nothing to the plot. They are drawn before the shade series because the
+  // plugin below addresses those by position.
+  const stageSeries = result.series || [];
+  stageSeries.forEach((stage, i) => {
+    data.push(stage.gain_db);
+    series.push({label: stage.label, stroke: seriesColor(i),
+                 width: 1, dash: [3, 2],
+                 value:(u,v)=>v==null?'—':v.toFixed(2)});
+  });
+
   // Each flagged stage gets a series that draws nothing: it exists for its
   // legend row, which names the stage and toggles its lane. The data column is
   // nulls, and it sits on its own scale, so the y axis stays the gain curve's.
+  //
+  // With the breakdown on a lane takes the colour of the stage it belongs to,
+  // found by the stage index rather than the label, so the shading and the
+  // curve it qualifies are one stage in one colour. With it off there are no
+  // stage curves to agree with and the lanes are coloured in their own order.
   const bands = (result.extrapolated || []).map((band, i) => ({
-    ...band, color: SERIES_COLORS[(i + 1) % SERIES_COLORS.length]}));
+    ...band, color: seriesColor(showGainContrib
+                                ? band.stage_index - result.from_plane : i)}));
   const blank = ghz.map(() => null);
   for (const band of bands){
     data.push(blank);
@@ -1811,7 +1858,8 @@ function renderGain(){
            {...AXIS, label:'gain (dB)', labelSize: labelBand('y')}],
     series,
     legend: {show: true},
-    plugins: bands.length ? [shadePlugin(bands, 2)] : [],
+    plugins: bands.length
+      ? [shadePlugin(bands, 2 + stageSeries.length)] : [],
   };
   if (gainPlot){ gainPlot.destroy(); gainPlot = null; }
   gainPlot = new uPlot(opts, data, $('pgain'));
@@ -1849,7 +1897,7 @@ function renderNoise(){
                    value:(u,v)=>v==null?'—':v.toFixed(1)}];
   result.series.forEach((s, i) => {
     data.push(s.dbm_per_hz);
-    series.push({label: s.label, stroke: SERIES_COLORS[(i + 1) % SERIES_COLORS.length],
+    series.push({label: s.label, stroke: seriesColor(i),
                  width: 1, dash: [3, 2],
                  value: (u, v) => v == null ? '—' : v.toFixed(1)});
   });
@@ -2064,19 +2112,30 @@ for (const btn of document.querySelectorAll('#unit button'))
 for (const btn of document.querySelectorAll('#tabs button'))
   btn.onclick = guard(() => selectPane(btn.dataset.pane));
 
-/* The toggle and its button, set together - a loaded chain can ask for the
-   breakdown, and a button reading `off` over a plot showing every source would
+/* Each toggle and its button, set together - a loaded chain can ask for either
+   breakdown, and a button reading `off` over a plot drawing every curve would
    be the state lying about itself. Redrawing is the caller's, so applying a
-   chain's operating point does not draw the plot twice. */
+   chain's operating point does not draw the plots twice. */
 function setContrib(on){
   showContrib = !!on;
   $('btnContrib').textContent = showContrib ? 'on' : 'off';
   $('btnContrib').classList.toggle('on', showContrib);
 }
 
+function setGainContrib(on){
+  showGainContrib = !!on;
+  $('btnGainContrib').textContent = showGainContrib ? 'on' : 'off';
+  $('btnGainContrib').classList.toggle('on', showGainContrib);
+}
+
 $('btnContrib').onclick = guard(() => {
   setContrib(!showContrib);
   renderNoise();
+});
+
+$('btnGainContrib').onclick = guard(() => {
+  setGainContrib(!showGainContrib);
+  renderGain();
 });
 
 /* The record panel is a band above the grid, so opening it takes height from

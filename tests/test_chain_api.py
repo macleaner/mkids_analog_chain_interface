@@ -50,7 +50,7 @@ def test_every_endpoint_returns_real_json():
         chain_api.presets(),
         chain_api.describe(),
         chain_api.budget("LNA", "input", CARRIER, SPECTRAL),
-        chain_api.sweep_gain(1e8, 3e9, 21),
+        chain_api.sweep_gain(1e8, 3e9, 21, contributions=True),
         chain_api.sweep_noise(CARRIER, 1e2, 1e6, 11, True, True),
         chain_api.to_json(),
         chain_api.notebook(),
@@ -176,10 +176,13 @@ def test_a_span_of_one_plane_is_zero_db_and_says_it_summed_nothing():
     view that the flat line is that and not a broken curve.
     """
     result = chain_api.sweep_gain(1e8, 3e9, 5, False, "LNA", "input",
-                                  "LNA", "input")
+                                  "LNA", "input", True)
     assert result["stage_labels"] == []
     assert result["gain_db"] == [0.0] * 5
     assert result["extrapolated"] == []
+    # Nothing was summed, so there is nothing to break the sum down into: the
+    # flat line is the whole answer rather than one curve of several.
+    assert result["series"] == []
 
 
 def test_a_converter_offers_only_its_analog_plane():
@@ -217,6 +220,68 @@ def test_the_total_gain_is_the_dac_output_to_the_adc_input():
     assert analog["gain_db"] == whole["gain_db"]
     # Not by summing the same stages: the wider span includes both converters.
     assert analog["stage_labels"] == whole["stage_labels"][1:-1]
+
+
+def test_a_gain_breakdown_sums_to_the_total_curve():
+    """
+    The breakdown is the total taken apart, not a second route to it. Gain adds
+    in dB along the path, so the stage curves have to sum to the curve already
+    drawn - two answers to one question on one plot is the failure worth
+    ruling out, and it is what a per-stage curve computed any other way would
+    give.
+    """
+    freq = np.linspace(1e8, 3e9, 13)
+    result = chain_api.sweep_gain(1e8, 3e9, 13, False, None, "input",
+                                  None, "output", True)
+    assert result["ok"], result.get("error")
+
+    # One curve per stage summed, named and ordered as the span itself is.
+    assert [s["label"] for s in result["series"]] == result["stage_labels"]
+    summed = np.sum([s["gain_db"] for s in result["series"]], axis=0)
+    assert list(summed) == pytest.approx(result["gain_db"], rel=1e-12)
+
+    # And each curve is that stage's own model, not a share worked out here.
+    stages = chain_api._CHAIN.stages()
+    for entry in result["series"]:
+        expected = np.broadcast_to(
+            np.asarray(stages[entry["stage_index"]][1].gain(freq),
+                       dtype=float), freq.shape)
+        assert entry["gain_db"] == pytest.approx(list(expected), rel=1e-12)
+
+
+def test_the_gain_breakdown_is_off_unless_it_is_asked_for():
+    """
+    A plot draws whatever series it is handed, so a breakdown nobody asked for
+    is curves appearing on it. And asking must not move the total either: the
+    breakdown is drawn over the same curve, not instead of it.
+    """
+    plain = chain_api.sweep_gain(1e8, 3e9, 9)
+    assert plain["series"] == []
+    broken = chain_api.sweep_gain(1e8, 3e9, 9, False, None, "input",
+                                  None, "output", True)
+    assert broken["gain_db"] == plain["gain_db"]
+
+
+def test_a_gain_breakdown_holds_the_span_and_indexes_the_whole_chain():
+    """
+    A stage outside the span is not in the curve, so it gets no curve of its
+    own. The index each one carries is its index in the whole chain even so -
+    the same one ``extrapolated`` reports - so a view can put a stage's curve
+    and its shaded lane in one colour without matching them up by label.
+    """
+    result = chain_api.sweep_gain(1e8, 3e9, 5, False,
+                                  "AD9082_DAC", "output", "LNA", "input", True)
+    assert [s["label"] for s in result["series"]] == \
+        ["InputAtten", "WarmCable_In", "CryoCable", "ColdAtten"]
+    assert [s["stage_index"] for s in result["series"]] == [1, 2, 3, 4]
+
+    # Wide enough to leave a datasheet, so the two reports actually meet.
+    wide = chain_api.sweep_gain(1e8, 12e9, 5, False, None, "input",
+                                None, "output", True)
+    assert wide["extrapolated"]
+    by_index = {s["stage_index"]: s["label"] for s in wide["series"]}
+    for band in wide["extrapolated"]:
+        assert by_index[band["stage_index"]] == band["label"]
 
 
 def test_referred_noise_sweep_matches_the_budget_at_that_offset():
@@ -1131,6 +1196,7 @@ POINT = {
     "gain_span_hz": [4.0e9, 6.0e9],
     "gain_from": {"reference": "LNA", "at": "input"},
     "gain_to": {"reference": "WarmAmp2", "at": "output"},
+    "gain_contributions": True,
     "noise_span_hz": [1.0, 1.0e4],
     "noise_plane": {"reference": "LNA", "at": "output"},
     "contributions": True,
@@ -1422,6 +1488,8 @@ def test_exported_json_loads_as_a_signal_chain():
     (lambda: chain_api.set_analysis({"noise_span_hz": [0.0, 1e3]}),
      "must be a positive frequency"),
     (lambda: chain_api.set_analysis({"contributions": "yes"}),
+     "must be true or false"),
+    (lambda: chain_api.set_analysis({"gain_contributions": 1}),
      "must be true or false"),
     (lambda: chain_api.set_analysis({"plane": "LNA"}),
      "must be an object with 'reference' and 'at'"),

@@ -836,6 +836,7 @@ _ANALYSIS_FALLBACK: Dict[str, Any] = {
     "carrier_hz": 1.5e9,
     "spectral_hz": 1.0e3,
     "gain_span_hz": [1.0e8, 3.0e9],
+    "gain_contributions": False,
     "noise_span_hz": [1.0e-2, 1.0e3],
     "contributions": False,
 }
@@ -925,6 +926,7 @@ _ANALYSIS_FIELDS: Dict[str, Any] = {
     "gain_span_hz": _analysis_span,
     "gain_from": _analysis_plane,
     "gain_to": _analysis_plane,
+    "gain_contributions": _analysis_flag,
     "noise_span_hz": _analysis_span,
     "noise_plane": _analysis_plane,
     "contributions": _analysis_flag,
@@ -990,8 +992,12 @@ def set_analysis(defaults: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         The same, for the two sweeps. Null is the chain's own end - the input
         before the DAC, the output after the ADC - which is what those
         functions already mean by a reference of None.
-    ``contributions``
-        Whether the noise sweep is shown broken down per source.
+    ``gain_contributions``, ``contributions``
+        Whether each sweep is shown broken down - the gain per stage, the
+        noise per source. ``contributions`` is the noise one and is not named
+        for it because it was written when that was the only breakdown there
+        was; chains saved since carry that spelling, and it has to go on
+        meaning what they said rather than being tidied up underneath them.
 
     Every field is validated here, and a plane has to resolve in *this* chain,
     because a record that quietly holds a value nothing can use is the failure
@@ -1284,8 +1290,8 @@ def _gain_plane(reference: Any, at: str, open_plane: int,
 def sweep_gain(start_hz: float, stop_hz: float, n: int = 401,
                log: bool = False,
                from_reference: Any = None, from_at: str = "input",
-               to_reference: Any = None, to_at: str = "output"
-               ) -> Dict[str, Any]:
+               to_reference: Any = None, to_at: str = "output",
+               contributions: bool = False) -> Dict[str, Any]:
     """
     Chain gain in dB between two planes, over a carrier-frequency sweep.
 
@@ -1315,6 +1321,16 @@ def sweep_gain(start_hz: float, stop_hz: float, n: int = 401,
     ``stage_labels`` names the stages that were summed, in signal order. It is
     what makes the curve checkable: an empty list means the two planes are the
     same plane, and a flat 0 dB is the honest answer rather than a broken one.
+
+    With ``contributions`` each of those stages comes back as its own curve as
+    well, in the same signal order. Gain adds in dB along the path, so the
+    stage curves sum to ``gain_db`` exactly: the breakdown is the total taken
+    apart, not a second way of arriving at it. Every stage in the span appears,
+    including the ones sitting at 0 dB - which is the difference from the noise
+    sweep's breakdown, where a silent stage has no contribution to show. Each
+    carries the ``stage_index`` it has in the whole chain, the same index
+    ``extrapolated`` reports, so a caller can put a stage's curve, its lane and
+    its row together without matching on labels.
     """
     start, stop = float(start_hz), float(stop_hz)
     freq = _grid(start, stop, n, bool(log))
@@ -1327,6 +1343,18 @@ def sweep_gain(start_hz: float, stop_hz: float, n: int = 401,
                                                  stages=stages), dtype=float)
     if gain.ndim == 0:
         gain = np.full_like(freq, float(gain))
+
+    series = []
+    if contributions:
+        for index in range(from_plane, to_plane):
+            label, component, _kind = stages[index]
+            # A stage that is flat in carrier frequency - a fixed pad - answers
+            # with a scalar; broadcast so every curve is the length of the axis.
+            stage_gain = np.broadcast_to(
+                np.asarray(component.gain(freq), dtype=float), freq.shape)
+            series.append({"label": label, "stage_index": index,
+                           "gain_db": _arr(stage_gain)})
+
     return {"freq_hz": _arr(freq), "gain_db": _arr(gain),
             "min_db": _num(np.nanmin(gain)), "max_db": _num(np.nanmax(gain)),
             "from_plane": from_plane, "to_plane": to_plane,
@@ -1334,6 +1362,7 @@ def sweep_gain(start_hz: float, stop_hz: float, n: int = 401,
             "n_stages": len(stages),
             "stage_labels": [label for label, _c, _k
                              in stages[from_plane:to_plane]],
+            "series": series,
             "extrapolated": _extrapolated_stages(start, stop,
                                                  from_plane, to_plane)}
 
