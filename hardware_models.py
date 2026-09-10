@@ -540,8 +540,12 @@ class ZX60_3018Gplus(_DatasheetGain, ActiveComponent):
               ParamSpec("attenuation", default=-10.0, label="Attenuation",
                         unit="dB", minimum=-100.0, maximum=0.0, step=1.0,
                         help="Insertion loss, negative for attenuation."),
+              # No upper bound: the noise this model adds is k_B*T exactly,
+              # proportional to temperature at any temperature, so there is no
+              # datasheet edge for a ceiling to stand on. Whether the part
+              # survives the temperature asked about is the user's business.
               ParamSpec("temperature", default=300.0, label="Temperature",
-                        unit="K", minimum=0.0, maximum=400.0, step=1.0,
+                        unit="K", minimum=0.0, step=1.0,
                         help="Physical temperature; sets the thermal noise "
                              "this attenuator adds."),
           ))

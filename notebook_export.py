@@ -756,14 +756,15 @@ plt.show()
 """))
         cells.append(_md("""
 Validation is declared once, on the parameter spec, so this rejects what the
-GUI rejects:
+GUI rejects - and accepts what it accepts, where a parameter declares no bound:
 """))
         cells.append(_code(f"""
 spec = registry.resolve({_literal(target['type_id'])}).param({_literal(spec.name)})
-print(f"{{spec.name}}: {{spec.minimum}} .. {{spec.maximum}} {{spec.unit}} "
+ceiling = "unbounded" if spec.maximum is None else spec.maximum
+print(f"{{spec.name}}: {{spec.minimum}} .. {{ceiling}} {{spec.unit}} "
       f"(default {{spec.default}})")
 try:
-    spec.validate(1e9)
+    print(f"accepted: {{spec.validate(1e9)}}")
 except ValueError as exc:
     print(f"rejected: {{exc}}")
 """))
