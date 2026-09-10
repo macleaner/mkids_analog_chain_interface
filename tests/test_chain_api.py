@@ -878,19 +878,39 @@ def test_a_sweep_past_the_datasheets_has_a_curve_and_says_which_stages():
     assert all(gain is not None for gain in result["gain_db"])
 
     flagged = {stage["label"]: stage for stage in result["extrapolated"]}
-    # The two ZX60s and the ASU LNA stop at 3 GHz; both cryo cables at 10 GHz.
-    # The warm cable (0-18 GHz), the attenuators and the converters cover the
-    # sweep and so are not in the list at all.
-    assert set(flagged) == {"LNA", "WarmAmp1", "WarmAmp2",
-                            "CryoCable", "ReturnCable"}
+    # The two ZX60s and the ASU LNA stop at 3 GHz. The attenuators and the
+    # converters cover the sweep, and the three cables are exempt rather than
+    # covered - see test_a_cable_is_not_flagged_outside_its_table.
+    assert set(flagged) == {"LNA", "WarmAmp1", "WarmAmp2"}
     assert flagged["LNA"]["span_to_hz"] == pytest.approx(3e9)
     assert flagged["LNA"]["regions_hz"] == [[pytest.approx(3e9),
                                              pytest.approx(12e9)]]
-    assert flagged["CryoCable"]["regions_hz"] == [[pytest.approx(10e9),
-                                                   pytest.approx(12e9)]]
     # Enough to draw and to name: the model's label, not just an index.
     assert flagged["LNA"]["type_label"] == "ASU 3 GHz LNA (~6 K)"
     assert roundtrips(result)
+
+
+def test_a_cable_is_not_flagged_outside_its_table():
+    """
+    Coax loss is monotonic in frequency, so extending it past the last
+    tabulated row holds no surprises and there is nothing for a lane to warn
+    about. The cables therefore stay out of the report however wide the sweep -
+    the cryo cables' tables stop at 10 GHz and this sweep runs to 40 - which is
+    what keeps a wide sweep's lanes on the stages whose out-of-band response
+    really is unpredictable.
+
+    Their band is not lost, only unflagged: `component_specs` still reports it
+    from the model, where it is a fact about the part rather than a caveat on a
+    curve.
+    """
+    flagged = {stage["label"] for stage
+               in chain_api.sweep_gain(1e8, 40e9, 41)["extrapolated"]}
+    assert flagged == {"LNA", "WarmAmp1", "WarmAmp2"}
+    assert not flagged & {"CryoCable", "ReturnCable", "WarmCable_In"}
+
+    spec = chain_api.component_specs("cable.sma_ss086_cryo", {"length_m": 0.5})
+    assert spec["span_source"] == "model"
+    assert spec["span_to_hz"] == pytest.approx(10e9)
 
 
 def test_only_the_stages_in_the_span_are_flagged():
@@ -902,21 +922,21 @@ def test_only_the_stages_in_the_span_are_flagged():
     """
     whole = {stage["label"] for stage
              in chain_api.sweep_gain(1e8, 12e9, 41)["extrapolated"]}
-    assert whole == {"LNA", "WarmAmp1", "WarmAmp2", "CryoCable", "ReturnCable"}
+    assert whole == {"LNA", "WarmAmp1", "WarmAmp2"}
 
     span = chain_api.sweep_gain(1e8, 12e9, 41, False,
-                                "AD9082_DAC", "output", "LNA", "input")
-    assert [stage["label"] for stage in span["extrapolated"]] == ["CryoCable"]
+                                "AD9082_DAC", "output", "LNA", "output")
+    assert [stage["label"] for stage in span["extrapolated"]] == ["LNA"]
     # The index is the stage's place in the whole chain, as `describe` reports
     # it, and not its offset within the span - a view names stages by it.
-    assert span["extrapolated"][0]["stage_index"] == 3
-    assert span["extrapolated"][0]["regions_hz"] == [[pytest.approx(10e9),
+    assert span["extrapolated"][0]["stage_index"] == 5
+    assert span["extrapolated"][0]["regions_hz"] == [[pytest.approx(3e9),
                                                       pytest.approx(12e9)]]
 
     # And a span clear of the flagged stages is unshaded on a sweep the chain
     # as a whole cannot cover - the positive statement, restricted.
     clear = chain_api.sweep_gain(1e8, 12e9, 41, False,
-                                 "AD9082_DAC", "output", "CryoCable", "input")
+                                 "AD9082_DAC", "output", "LNA", "input")
     assert clear["extrapolated"] == []
 
 

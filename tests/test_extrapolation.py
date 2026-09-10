@@ -91,6 +91,21 @@ def test_every_tabulated_model_states_its_band(type_id):
     assert 0.0 <= low < high
 
 
+@pytest.mark.parametrize("type_id", sorted(TABULATED))
+def test_only_a_cable_leaves_its_band_unflagged(type_id):
+    """
+    Saying where the band ends and saying it matters are two statements, and
+    the models make them separately. A cable makes the first and not the
+    second: its loss is monotonic in frequency, so the extension is dull rather
+    than merely tolerable, and a report that named every cable in a wide sweep
+    buried the parts whose out-of-band response nothing predicts. Every other
+    model here - amplifiers, filters, the splitter, the circulator - is one of
+    those parts.
+    """
+    is_cable = type_id.startswith("cable.")
+    assert build(type_id).flags_extrapolation is not is_cable
+
+
 @pytest.mark.parametrize("type_id", sorted(set(TABULATED) - FILTERS))
 def test_extrapolation_never_beats_the_measured_curve(type_id):
     """

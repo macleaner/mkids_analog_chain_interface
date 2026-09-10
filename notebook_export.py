@@ -482,6 +482,12 @@ numbers marks where the data stopped. Each stage says where through
 frequencies where its gain is an extension rather than a measurement. Treat
 those as an indication — an amplifier's out-of-band response is set by its
 matching networks, and no straight line predicts it.
+
+The cables are left out, through their `flags_extrapolation`. Coax loss is
+monotonic in frequency and an extension of it holds no surprises, so a lane per
+cable shaded most of a wide sweep without saying anything about the stages that
+do need watching; each cable's tabulated band is still on the model if you want
+it.
 """))
     cells.append(_code(f"""
 print(f"total gain @ {{CARRIER/1e9:.3f}} GHz: {{chain.total_gain(CARRIER):7.2f}} dB"){span_pair}
@@ -499,6 +505,8 @@ for label, component, _kind in chain.stages():
     span = getattr(component, "defined_span_hz", None)
     if span is None:
         continue                     # answers everywhere; nothing to flag
+    if not getattr(component, "flags_extrapolation", True):
+        continue                     # a cable: predictable outside its band
     low, high = span()
     regions = ([(sweep_span[0], min(low, sweep_span[1]))] if sweep_span[0] < low else [])
     if sweep_span[1] > high:

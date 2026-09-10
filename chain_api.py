@@ -1225,7 +1225,13 @@ def _extrapolated_stages(start: float, stop: float, from_plane: int = 0,
 
     The band comes from the model (see :func:`_defined_span`), so a stage
     appears here for the same reason its gain is an estimate there and cannot
-    disagree with it.
+    disagree with it. Whether leaving that band is worth reporting is the
+    model's call too, through ``flags_extrapolation``: the cables set it False,
+    because coax loss is monotonic in frequency and an extension of it holds no
+    surprises, so flagging every cable in a wide sweep shaded most of the plot
+    while saying nothing about the stages whose out-of-band response really is
+    unpredictable. Their band is still reported by :func:`component_specs`,
+    where it is a fact about the model rather than a warning about a curve.
 
     ``from_plane``/``to_plane`` restrict the report to the stages between two
     planes, which is the span the gain was summed over. A stage outside that
@@ -1239,6 +1245,8 @@ def _extrapolated_stages(start: float, stop: float, from_plane: int = 0,
     out = []
     for index in range(from_plane, to_plane):
         label, component, kind = stages[index]
+        if not getattr(component, "flags_extrapolation", True):
+            continue                        # a predictable trend outside its band
         span = _defined_span(component)
         if span is None:
             continue                        # answers everywhere; nothing to flag
@@ -1295,12 +1303,14 @@ def sweep_gain(start_hz: float, stop_hz: float, n: int = 401,
     amplifiers further along the chain run out of datasheet over the sweep.
 
     ``extrapolated`` lists the stages inside the span that are outside their
-    datasheet somewhere in this sweep. They answer there rather than returning
-    NaN - a NaN in a dB sum would take the whole curve with it - so the gain is
-    continuous and nothing in it shows where the measurements stopped. This is
-    that, said separately: the numbers over those regions are indications, not
-    specifications. An empty list is a positive statement that every stage in
-    the span covers the whole sweep.
+    datasheet somewhere in this sweep and whose extension is worth knowing
+    about. They answer there rather than returning NaN - a NaN in a dB sum
+    would take the whole curve with it - so the gain is continuous and nothing
+    in it shows where the measurements stopped. This is that, said separately:
+    the numbers over those regions are indications, not specifications. An
+    empty list means nothing in the span needs that caveat, which is not quite
+    the same as every stage covering the whole sweep: a cable outside its table
+    is left out on purpose (see :func:`_extrapolated_stages`).
 
     ``stage_labels`` names the stages that were summed, in signal order. It is
     what makes the curve checkable: an empty list means the two planes are the

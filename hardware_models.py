@@ -74,7 +74,9 @@ def _datasheet_curve(frequencies_hz, values):
     Values outside the span are an indication, not a specification: an
     amplifier's out-of-band response is set by its matching networks, a real
     filter's far stopband is re-entrant, and coax loss climbs as sqrt(f). No
-    straight line predicts any of the three.
+    straight line predicts any of the three. They differ in how they fail,
+    though, and only the first two are reported per stage - see
+    ``flags_extrapolation`` on :class:`_DatasheetSpan`.
     """
     freqs = np.asarray(frequencies_hz, dtype=float)
     tabulated = np.asarray(values, dtype=float)
@@ -93,10 +95,23 @@ class _DatasheetSpan:
     A caller that needs the distinction has to ask, because the gain itself no
     longer shows it - ``chain_api`` asks per stage and the GUI shades the rest
     of the sweep.
+
+    ``flags_extrapolation`` is a separate question from where the band ends:
+    whether leaving it is worth telling the reader about. It is the model's call
+    and not the view's, because it depends on what the curve is a curve of - see
+    the cables, which set it False.
     """
 
     #: (low_hz, high_hz) the gain curve is tabulated over; set at construction.
     _span_hz = None
+
+    #: Whether a sweep past ``_span_hz`` is worth reporting as an estimate.
+    #: True by default: for most parts the extension is a straight line through
+    #: behaviour no straight line describes - an amplifier's matching networks,
+    #: a filter's re-entrant stopband - so a reader who cannot see the band edge
+    #: in the curve needs to be told where it was. A model whose loss follows a
+    #: known trend outside its table sets this False.
+    flags_extrapolation = True
 
     def defined_span_hz(self):
         """The carrier band the gain curve is tabulated over, low and high in Hz."""
@@ -987,17 +1002,29 @@ class _TemperatureSwitchedCable(_DatasheetSpan, PassiveComponent):
     matching the original per-class implementations.
 
     Both curves extrapolate, clamped to the least loss the datasheet measured so
-    an extension cannot turn a length of coax into an amplifier - a cable's loss
-    climbs smoothly as roughly sqrt(f), which is the most defensible
-    extrapolation in the library, and it is still flagged as one. The tabulated
+    an extension cannot turn a length of coax into an amplifier. The tabulated
     span is reported through ``defined_span_hz`` and is the same for both
     curves: the two temperatures are columns of one table.
+
+    That extension is not flagged, and this is the class the reasoning lives in
+    for every cable here. Coax loss has no features: it is resistive loss going
+    as sqrt(f) plus dielectric loss going as f, both monotonic, so past the last
+    tabulated row there is nothing to be surprised by - unlike an amplifier's
+    matching networks or a filter's re-entrant stopband, which is what flagging
+    an extrapolation is for. Extending the endpoint slope of a table models the
+    sqrt(f) term as if it grew like f, so the error is an overstatement of loss,
+    smooth and in the direction that does not flatter a budget. What it does not
+    cover is the mechanisms the loss curve never described in the first place: a
+    braided outer conductor leaking as the weave approaches a wavelength, or a
+    connector's own response. Those are reasons to distrust a cable well past
+    its band, and no shaded lane was reporting them either.
     """
 
     frequencies_hz = None
     warm_db_per_m = None
     cold_db_per_m = None
     transition_k = 100
+    flags_extrapolation = False
 
     def __init__(self, length_m, temperature=4, name=None):
         super().__init__(name=name, params={
@@ -1165,11 +1192,13 @@ class _RoomTemperatureCable(_DatasheetSpan, PassiveComponent):
 
     ``db_per_m`` is per-metre loss in dB and must be negative; the total is
     scaled by length exactly once, in gain(). The curve extrapolates and is
-    clamped exactly as :class:`_TemperatureSwitchedCable`'s is.
+    clamped exactly as :class:`_TemperatureSwitchedCable`'s is, and goes
+    unflagged outside its span for the reason given there.
     """
 
     frequencies_hz = None
     db_per_m = None
+    flags_extrapolation = False
 
     def __init__(self, length_m, name=None):
         super().__init__(name=name, params={"length_m": length_m})
@@ -1333,8 +1362,10 @@ class _FormulaCable(_DatasheetSpan, PassiveComponent):
     from the band; the formula keeps each term's exponent wherever it is
     evaluated, so the only thing out of warranty above the datasheet's range is
     the calibration of two coefficients. ``defined_span_hz`` still reports the
-    range the vendor validates, so a sweep past it is flagged per stage exactly
-    as a tabulated model's is - the estimate is better, not exempt.
+    range the vendor validates - a spec panel draws that band and says so - but
+    a sweep past it is not flagged per stage, as for the tabulated cables and
+    for the same reason (see :class:`_TemperatureSwitchedCable`), which this
+    form only strengthens.
 
     No clamp, unlike the tabulated cables. Their extrapolation needs one because
     a linear extension toward DC runs a loss curve up through zero and out the
@@ -1349,6 +1380,7 @@ class _FormulaCable(_DatasheetSpan, PassiveComponent):
     atten_b = None
     #: Highest frequency the vendor quotes the coefficients for, in GHz.
     datasheet_fmax_ghz = None
+    flags_extrapolation = False
 
     def __init__(self, length_m, name=None):
         super().__init__(name=name, params={"length_m": length_m})
@@ -1378,12 +1410,14 @@ class SMA_RG316_cables(_FormulaCable):
     1.05 GHz, 1.63 at 3 GHz.
 
     Validated to 3 GHz, which is the operating frequency on the front page and
-    the ``fmax`` beside the coefficients, so a sweep past 3 GHz is reported as
-    an estimate like any other. It is a well-founded estimate - both terms keep
-    their physical meaning at higher frequency - but the coefficients were only
-    ever checked below 3 GHz, and a braided outer conductor starts to leak as
-    the weave approaches a wavelength, which this form does not describe at all.
-    Screening is only specified to 1 GHz.
+    the ``fmax`` beside the coefficients, and that band is what the spec panel
+    draws. Above it the formula is still a well-founded estimate - both terms
+    keep their physical meaning at higher frequency - but the coefficients were
+    only ever checked below 3 GHz, and a braided outer conductor starts to leak
+    as the weave approaches a wavelength, which this form does not describe at
+    all. Screening is only specified to 1 GHz. Worth knowing before trusting
+    this model at 10 GHz; not something a chain sweep flags, since a cable's
+    loss curve has no out-of-band features to warn about.
 
     Not modelled: the 135 W CW rating at 1 GHz falling as 1/sqrt(f), the -65 to
     +200 C range, 1.5 kVrms operating voltage, or the 4.86 ns/m delay. This is
