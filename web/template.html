@@ -535,6 +535,12 @@ let unitCol = 'contribution_dBm_per_hz';
 let activePane = 'paneBudget';  // which of the third column's two tabs is up
 let showContrib = false;        // the noise plot's, per source
 let showGainContrib = false;    // the gain plot's, per stage
+/* Which stage curves are drawn, by label. Every render rebuilds the plot from
+   nothing, so without this a nudged span would put back the nine curves just
+   dismissed. Turning the breakdown on empties it: ten curves at once is the
+   clutter the checkboxes exist to avoid, so it opens on none of them and the
+   stages go on one at a time. */
+let gainStagesShown = new Set();
 let gainPlot = null, noisePlot = null;
 
 const $ = id => document.getElementById(id);
@@ -1772,9 +1778,10 @@ function shadePlugin(bands, first){
    saying because the arithmetic is not the noise plot's: there the sources add
    in power and the total sits above every one of them, here they add in dB and
    a loss pulls the total below. */
-const STAGE_NOTE = 'Each stage in the span is drawn as well. Gain adds in dB '
-  + 'along the chain, so those curves sum to the total rather than sitting '
-  + 'under it — click a legend entry to hide one. ';
+const STAGE_NOTE = 'Every stage in the span has a legend entry, all of them '
+  + 'off to start with — click one to draw that stage, and the plot fills up '
+  + 'with what is being compared and nothing else. Gain adds in dB along the '
+  + 'chain, so the full set sums to the total rather than sitting under it. ';
 
 /* What the caption says about the lanes, whichever span is drawn. */
 const LANE_NOTE = 'A shaded lane marks a stage that is outside its datasheet '
@@ -1817,11 +1824,16 @@ function renderGain(){
   // only when the breakdown is on, so `series` is empty otherwise and this adds
   // nothing to the plot. They are drawn before the shade series because the
   // plugin below addresses those by position.
+  //
+  // Each arrives switched off, so turning the breakdown on adds ten legend
+  // entries rather than ten curves and the stages are compared a few at a
+  // time. A hidden series is also out of the y scale, so the total keeps the
+  // axis it had and checking a deep loss on is what widens it.
   const stageSeries = result.series || [];
   stageSeries.forEach((stage, i) => {
     data.push(stage.gain_db);
     series.push({label: stage.label, stroke: seriesColor(i),
-                 width: 1, dash: [3, 2],
+                 width: 1, dash: [3, 2], show: gainStagesShown.has(stage.label),
                  value:(u,v)=>v==null?'—':v.toFixed(2)});
   });
 
@@ -1858,6 +1870,18 @@ function renderGain(){
            {...AXIS, label:'gain (dB)', labelSize: labelBand('y')}],
     series,
     legend: {show: true},
+    // uPlot owns the checkbox; this only notes what it did, and only for the
+    // stage curves - a lane's show/hide is the plot's own business and lasts
+    // as long as the plot does. A hook is a list of callbacks even when there
+    // is one of them, and `show` is absent when the hook fires for a hover
+    // rather than a click.
+    hooks: {setSeries: [(u, index, changed) => {
+      if (!changed || !('show' in changed)) return;
+      if (index < 2 || index >= 2 + stageSeries.length) return;
+      const label = stageSeries[index - 2].label;
+      if (u.series[index].show) gainStagesShown.add(label);
+      else gainStagesShown.delete(label);
+    }]},
     plugins: bands.length
       ? [shadePlugin(bands, 2 + stageSeries.length)] : [],
   };
@@ -2124,6 +2148,9 @@ function setContrib(on){
 
 function setGainContrib(on){
   showGainContrib = !!on;
+  // Switched on is the user asking for the plot they can add to, not for
+  // whatever they had checked before they switched it off.
+  if (showGainContrib) gainStagesShown.clear();
   $('btnGainContrib').textContent = showGainContrib ? 'on' : 'off';
   $('btnGainContrib').classList.toggle('on', showGainContrib);
 }
