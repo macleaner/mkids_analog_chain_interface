@@ -363,7 +363,7 @@ print(f"numpy {{np.__version__}}")
 ## 1. The chain
 
 **This is the chain that was open in the GUI**, written into the cell below in
-the same format **download chain.json** writes. It is the subject of the
+the same format **save chain.json** writes. It is the subject of the
 notebook, not a default: nothing is looked up on disk, so no file lying around
 can change what gets analysed, and no download has to have happened.
 

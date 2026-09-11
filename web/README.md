@@ -31,6 +31,39 @@ launch from the menu has no terminal, so there a failure is also shown in a
 dialog (zenity/kdialog/xmessage/notify-send, whichever exists) and the failing
 step's output is written to `dist/last-build.log`.
 
+## Where saved files go
+
+**save chain.json** and **notebook.ipynb** put a save dialog up, opened on the
+folder that kind of file went to last time. That dialog does not come from the
+browser: a page opened from `file://` cannot show one. Firefox has no
+`showSaveFilePicker` at all, and Chrome's refuses the opaque origin a `file://`
+page has, so the only thing the page can do by itself is hand the browser a
+download — which lands in the browser's download folder, without asking and
+without saying where it went. For a chain file that is the record of a
+measurement, the folder it belongs in is the point.
+
+`save_helper.py` is the other half. `./open_web_gui.py` starts it after opening
+the page and then stays running, which is why the launch does not return to the
+prompt; the page POSTs the file to it on loopback and it asks with the
+desktop's own dialog (zenity, kdialog or tkinter), writes the file, and records
+the folder in `~/.config/analog-chain-calculator/save-dirs.json` — per
+extension, so filing a notebook elsewhere does not move where the next chain
+file is offered. The first save of all opens on `~/Downloads`, where every file
+from this page landed before there was a helper.
+
+Nothing is written without that dialog being confirmed. A loopback port is
+reachable from every page in the browser, so a request also has to repeat the
+secret in `~/.config/analog-chain-calculator/save-token`, which the page
+carries in its config and the assembler reads from the same file — otherwise
+any site you had open could put a save dialog in front of you.
+
+The helper is an improvement, not a dependency. Stop it, run
+`./open_web_gui.py --no-helper`, or open `dist/analog_chain_calculator.html` on
+a machine that has no checkout, and the buttons go back to downloading the way
+they did before — which is also what happens to a copy of the page mailed to
+someone else. A second launch does not start a second helper: the port is
+already taken, and the one already running serves the new page too.
+
 ## Build
 
 ```bash
@@ -448,7 +481,7 @@ filename dropped in, so nothing in it has to be edited before it runs:
   than emitted as cells that cannot run.
 
 **The chain it analyses is the one that was on screen**, embedded in the first
-code cell as the chain file — byte for byte what **download chain.json**
+code cell as the chain file — byte for byte what **save chain.json**
 writes. It is the notebook's subject, not a default it falls back to: nothing
 is looked up on disk, so no file lying around can change what gets analysed
 and no download has to have happened first. The prose in the notebook and the

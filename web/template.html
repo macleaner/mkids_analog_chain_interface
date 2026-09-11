@@ -348,7 +348,7 @@ tr.dom td{color:var(--accent)}
   <div class="spacer"></div>
   <button id="btnNew">new chain</button>
   <button id="btnUpload">open chain…</button>
-  <button id="btnDownload" class="primary">download chain.json</button>
+  <button id="btnDownload" class="primary" title="write this chain to a file — a save dialog asks where, and opens where you last put one">save chain.json</button>
   <button id="btnNotebook" title="a notebook holding this chain, that reproduces
 this page's plots and table over it — open it in Jupyter">notebook.ipynb</button>
   <span id="stamp"></span>
@@ -434,7 +434,7 @@ this page's plots and table over it — open it in Jupyter">notebook.ipynb</butt
     <div class="pane" id="paneJson" role="tabpanel" hidden>
       <div class="tot" id="jsonmeta"></div>
       <p class="doc">Read-only, and rewritten as you edit the chain. This is what
-        <b>download chain.json</b> writes and what <code>SignalChain.load</code>
+        <b>save chain.json</b> writes and what <code>SignalChain.load</code>
         reads back — not a summary of it. <b>notebook.ipynb</b> embeds this
         same text and analyses it, so a notebook is this chain with the
         analysis attached.</p>
@@ -2212,7 +2212,7 @@ $('recDone').onclick = () => $('record').classList.remove('open');
    current chain is kept - this discards it, and nothing is autosaved. */
 $('btnNew').onclick = guard(() => {
   const name = prompt('Start a new chain? The current one is discarded — '
-                    + 'download it first if you need it.\n\nName:', 'New Chain');
+                    + 'save it first if you need it.\n\nName:', 'New Chain');
   if (name === null) return;
   CHAIN = call('new_chain', name.trim() || 'New Chain');
   selected = null;
@@ -2223,9 +2223,59 @@ $('btnNew').onclick = guard(() => {
   $('recDesc').focus();
 });
 
-/* Both downloads are text Python produced, so saving one is the same three
-   lines either way. */
-function saveFile(text, filename, mime){
+/* Both files this page hands back are text Python produced, so saving one is
+   the same call either way: ask the save helper, and download it if no helper
+   answers.
+
+   The download is the fallback rather than the behaviour because a page cannot
+   say where it goes. It lands in the browser's download folder without asking,
+   which for a chain file kept as the record of a measurement is the wrong
+   folder and a silent one - the file is filed by hand afterwards, or not at
+   all. A page opened from file:// also cannot put a dialog up itself (Firefox
+   has no showSaveFilePicker, and Chrome's refuses this origin), so the dialog
+   has to come from outside the browser: save_helper.py, listening on loopback,
+   which asks with the desktop's own dialog and opens it in the folder this
+   kind of file went to last time. */
+async function saveFile(text, filename, mime){
+  if (await saveThroughHelper(text, filename)) return;
+  downloadFile(text, filename, mime);
+}
+
+/* True when the helper has dealt with this file - written it, or been told not
+   to. False means no helper answered and the download has to, which is also
+   what a copy of this page opened on a machine with no checkout gets. */
+async function saveThroughHelper(text, filename){
+  if (!CONFIG.save_port || !CONFIG.save_token) return false;
+  let reply;
+  try {
+    const res = await fetch(`http://127.0.0.1:${CONFIG.save_port}/save`, {
+      method: 'POST',
+      // text/plain keeps this a request the browser sends without a preflight,
+      // which is one less exchange to get right for a body only the helper
+      // ever reads. It is JSON regardless of what this header calls it.
+      headers: {'Content-Type': 'text/plain;charset=UTF-8'},
+      body: JSON.stringify({token: CONFIG.save_token, filename, text}),
+    });
+    reply = await res.json();
+  } catch (err){
+    return false;                     // no helper: the download does it
+  }
+  if (reply.status === 'saved'){ showBanner(`saved to ${reply.path}`, true); return true; }
+  if (reply.status === 'cancelled') return true;
+  if (reply.status === 'busy'){
+    showBanner('a save dialog is already open', true);
+    return true;
+  }
+  // The helper is running but cannot ask (no zenity, kdialog or tkinter), so
+  // the download is still the better answer. Anything else it refused - a
+  // stale token, a folder it could not write - is reported instead of quietly
+  // writing the file somewhere the dialog never mentioned.
+  if (reply.status === 'nodialog') return false;
+  showError(`could not save: ${reply.error || reply.status}`);
+  return true;
+}
+
+function downloadFile(text, filename, mime){
   const url = URL.createObjectURL(new Blob([text], {type: mime}));
   const link = document.createElement('a');
   link.href = url;

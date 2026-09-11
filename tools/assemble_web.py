@@ -37,6 +37,13 @@ from datetime import datetime, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# The page has to know where the save helper listens and what secret to repeat
+# to it, and both come from the helper itself rather than being written down
+# twice. Importing it is also what creates the secret on a machine that has not
+# built before, so the page and the helper agree from the first build.
+sys.path.insert(0, ROOT)
+import save_helper
+
 # Order matters: the assembler asserts the markers appear in this sequence, so
 # a template edit that moves one is caught rather than silently reordering the
 # payloads.
@@ -168,6 +175,12 @@ def main():
         'built_at': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),
         'git_sha': git_sha(),
         'offline': False,
+        # Where the page sends a file it is asked to save, so that a native
+        # dialog decides the folder instead of the browser's download setting.
+        # A page whose helper is not listening falls back to downloading, so
+        # these are a route to something better and not a requirement.
+        'save_port': save_helper.DEFAULT_PORT,
+        'save_token': save_helper.token(),
         # The checkout this artifact was built from, for the notebook download
         # to put on sys.path: the core is not on PyPI, so a generated notebook
         # that named no path would need editing before its first cell ran. It

@@ -5,6 +5,12 @@
     ./open_web_gui.py --force      rebuild both stages unconditionally
     ./open_web_gui.py --no-open    build only, print the path
     ./open_web_gui.py --desktop    install a double-clickable desktop entry
+    ./open_web_gui.py --no-helper  do not run the save helper
+
+Having opened the page, this stays running as the save helper (save_helper.py):
+the page hands it the files you save so they go through a real save dialog
+instead of the browser's download folder. That is why the launch does not
+return to the prompt - stopping it costs nothing but the dialog.
 
 The two-stage build (`pip wheel` then `tools/assemble_web.py`) is documented in
 web/README.md and is still the thing to run when you care which stage ran. This
@@ -31,6 +37,8 @@ import sys
 import webbrowser
 import zipfile
 
+import save_helper
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 DIST = os.path.join(ROOT, 'dist')
 PAGE = os.path.join(DIST, 'analog_chain_calculator.html')
@@ -51,6 +59,9 @@ PAGE_SOURCES = [
     os.path.join(ROOT, 'web', 'vendor', 'uPlot.min.css'),
     os.path.join(ROOT, 'web', 'vendor', 'uPlot.iife.min.js'),
     os.path.join(ROOT, 'tools', 'assemble_web.py'),
+    # The page's config names the port the save helper listens on, so a change
+    # to it is a change to the page.
+    os.path.join(ROOT, 'save_helper.py'),
 ]
 
 
@@ -241,6 +252,9 @@ def main():
                     help='build only; print the path instead of opening it')
     ap.add_argument('--desktop', action='store_true',
                     help='install a desktop entry and exit')
+    ap.add_argument('--no-helper', action='store_true',
+                    help='skip the save helper; saved files go to the '
+                         'browser download folder as before')
     args = ap.parse_args()
 
     global GUI
@@ -290,6 +304,10 @@ def main():
         print(PAGE)
         return
 
+    # Bound before the browser is opened, so a page that boots quickly and is
+    # saved from immediately finds it. Serving starts below.
+    helper = None if args.no_helper else save_helper.start()
+
     # The page fetches Pyodide from a CDN the first time it is opened; after
     # that the browser cache serves it.
     if webbrowser.open(f'file://{PAGE}'):
@@ -298,6 +316,23 @@ def main():
     else:
         print(f'\nno browser could be launched — open this file yourself:\n'
               f'  file://{PAGE}')
+
+    if args.no_helper:
+        return
+    if helper is None:
+        # The port is taken, which on this machine means an earlier launch is
+        # still serving. Its dialogs are this page's dialogs, so there is
+        # nothing to add and nothing to warn about.
+        print(f'  save dialogs: a helper is already running on '
+              f'127.0.0.1:{save_helper.DEFAULT_PORT}')
+        return
+    print(f'  save dialogs: serving on 127.0.0.1:{save_helper.DEFAULT_PORT} — '
+          f'Ctrl-C stops it,\n'
+          f'    after which saving falls back to your browser download folder')
+    try:
+        helper.serve_forever()
+    except KeyboardInterrupt:
+        print('\nsave helper stopped')
 
 
 if __name__ == '__main__':

@@ -68,6 +68,8 @@ python open_web_gui.py --desktop
 
 The menu launcher builds or updates the browser calculator when needed and opens it in your browser. **Network access is required on first launch** to download the Python runtime and dependencies. Subsequent loads may use the browser cache; a fully offline bundle is not implemented.
 
+Having opened the page, the launcher keeps running in the background as the save helper: it is what puts a real save dialog up when you save a chain file, opened on the folder you last saved that kind of file to. Closing it (or launching with `--no-helper`) costs only that — the buttons fall back to downloading into your browser's download folder. See [where saved files go](web/README.md#where-saved-files-go).
+
 ### Updating
 
 ```bash
@@ -85,7 +87,7 @@ See [the browser guide](web/README.md) for build details.
 3. Set the noise budget's reference plane, carrier frequency, and spectral offset. Select units and inspect each source's share of the total.
 4. Adjust the gain plot's planes and frequency span, and the noise plot's reference plane and offset span. Enable component/source breakdowns as needed.
 5. Click the chain name to edit its name and notes. **save the current view** records the operating point for reopening the chain; changing plot controls alone does not save it.
-6. Use **download chain.json** to save the chain or **notebook.ipynb** to continue the analysis in Jupyter. The **Chain file** tab previews the serialized record.
+6. Use **save chain.json** to save the chain or **notebook.ipynb** to continue the analysis in Jupyter — both ask where to put the file and open on the folder you last used for that kind of file. The **Chain file** tab previews the serialized record.
 
 ## Continue in a notebook
 
