@@ -19,6 +19,9 @@ path and date rather than copied here.
 
 | File | Part | Model class | Revision | Retrieved |
 |---|---|---|---|---|
+| `bpnyq1-a.csv` | t0 band-defining filter, Nyquist zone 1 | `T0_BandDef_Nyquist1` | SHN914A trace, 2026-09-12 | 2026-09-12 |
+| `bpnyq2-a.csv` | t0 band-defining filter, Nyquist zone 2 | `T0_BandDef_Nyquist2` | SHN914A trace, 2026-09-12 | 2026-09-12 |
+| `bpnyq3-a.csv` | t0 band-defining filter, Nyquist zone 3 | `T0_BandDef_Nyquist3` | SHN914A trace, 2026-09-12 | 2026-09-12 |
 | `CITCRYO1-12D_Technical_DataSheet_04.13.26.pdf` | CMT CITCRYO1-12D cryogenic LNA | `CMT_CITCRYO1_12D` | Rev. 04/13/2026 | 2026-09-03 |
 | `lnf-lnc0-3_14b.pdf` | Low Noise Factory LNC0.3_14B | `LNF_LNC0_3_14B` | dated 2023-02-24 | 2026-09-03 |
 | `lnf-lnc1-5_6b.pdf` | Low Noise Factory LNC1.5_6B | `LNF_LNC1_5_6B` | dated 2023-02-23 | 2026-09-03 |
@@ -44,7 +47,15 @@ changing the URL, so re-fetching one of these can quietly hand you different
 numbers under the same name. Check the revision in the footer against the table
 above before concluding a model disagrees with its source.
 
+The three `bpnyq*.csv` are not vendor documents at all but our own VNA traces,
+and the rule there is the opposite one: nothing reissues them, but nothing
+guarantees the next unit matches either. The `-a` in each name is the unit
+measured. See below.
+
 ```
+c05ac88a0b814e44526f571a182d39495e97ac434aa6699d338215705c5ac60d  bpnyq1-a.csv
+6377ab4424dc5ebc69427582cb1be6a474b1507632698e0d4de81a3536d9f5b9  bpnyq2-a.csv
+b387b850f0cc305d242bd487fb72ce194ff1be0151468f0bcf3fbc43e577c63f  bpnyq3-a.csv
 588648afebacaa4f1a9f43e256a8ae8c88d95b8e243083beaccc25426605a0a2  CITCRYO1-12D_Technical_DataSheet_04.13.26.pdf
 357e96ba8f26b8e9cc8ba437f8ac871410bff5098e3f2c42ae59bac734c791b5  lnf-lnc0-3_14b.pdf
 a00b61e2fb304f22fe46eb062c326222be191801a5146e678fe793e2cc2df2b4  lnf-lnc1-5_6b.pdf
@@ -174,6 +185,39 @@ slope, and since an extrapolation extends that slope the model would then climb
 with frequency above 15 GHz instead of rolling off. An out-of-band estimate that
 is too generous is the one kind this library will not carry. A chain that needs
 the top of that part's band wants its own measurement.
+
+**The three `bpnyq*` filters** are the only models here built from a
+measurement of one specific unit rather than a vendor's published typical, and
+they should be read accordingly: what is tabulated is one trace off one filter
+on one day, carrying that unit's ripple and that measurement's noise where a
+datasheet curve would have had both averaged or idealised away.
+
+Two limits of the sweep bound all three. Its stopband is the instrument's noise
+floor rather than the filters' rejection - out of band the traces sit at -65 to
+-90 dB scattering by 15 dB point to point with phase uniform over the circle,
+which is a VNA measuring its own dynamic range - so read any of it as "below
+-60 dB and not resolved" and never quote the tabulated figure. And the sweep
+starts at 1 GHz, which for the Nyquist 1 filter is already inside the passband,
+so the bottom third of zone 1 is unswept. There is no cutoff hiding down there
+- that part is a low pass and is flat to DC - but the flatness is asserted from
+what the filter is rather than shown by this trace, and it is the only claim in
+the library of that kind. A sweep starting near DC would confirm it rather than
+discover it.
+
+Those two together are why these three depart from the vendor filters in one
+respect. Outside the swept range they hold the edge value instead of extending
+the endpoint slope. A vendor table ends on an exact number partway down a real
+skirt, so extending its slope is an estimate; these end in noise, so the slope
+is whatever two random neighbouring points did - taking it has the Nyquist 2
+model report 0 dB at DC, deep in its stopband with the slope running up into
+the 0 dB passband ceiling, and the Nyquist 1 model report -12 dB at 10 GHz.
+Holding the edge claims less and is the only thing a sweep supports about where
+it stopped.
+
+The files also carry S21 phase, which nothing models. The dB values in
+`hardware_models.py` are rounded to 0.01 dB from the twelve figures the
+instrument writes, a change of at most 0.005 dB, and are otherwise the file's
+own rows in the file's own order.
 
 ## What is still missing
 

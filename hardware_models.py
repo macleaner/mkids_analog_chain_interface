@@ -1122,6 +1122,253 @@ class FilterLP_VLFG2000p(_InterpolatedFilter):
     )
 
 
+
+#: Carrier grid the three t0 band-defining filters were swept on: 1 to 9 GHz
+#: in 40 MHz steps, 201 points, identical across the three files.
+_T0_BANDDEF_FREQ_HZ = np.linspace(1e9, 9e9, 201)
+
+#: Measured S21 in dB for each filter, on _T0_BANDDEF_FREQ_HZ, rounded to
+#: 0.01 dB from the twelve figures the instrument writes - a change of at most
+#: 0.005 dB, and far below anything the measurement resolves. Row order is the
+#: file's, so any value here is the corresponding line of the CSV.
+_T0_NYQ1_S21_DB = np.asarray([
+     -2.59, -1.80, -2.66, -1.77, -2.52, -1.78, -2.30, -1.84, -2.07,
+     -1.89, -1.96, -1.95, -2.00, -2.05, -2.21, -2.34, -2.62, -2.85,
+     -3.09, -3.42, -3.36, -3.58, -3.22, -3.17, -2.78, -2.71, -3.13,
+     -3.58, -4.54, -5.11, -5.03, -4.91, -4.34, -7.20, -12.64, -16.90,
+     -22.16, -24.52, -29.38, -30.94, -34.99, -36.68, -39.53, -41.88,
+     -43.84, -46.05, -48.28, -49.51, -52.78, -53.03, -56.43, -56.46,
+     -58.68, -59.61, -62.13, -63.63, -63.61, -68.23, -69.61, -68.85,
+     -71.75, -72.38, -73.67, -72.08, -73.51, -84.39, -78.39, -75.01,
+     -73.24, -92.14, -83.41, -82.21, -82.00, -70.77, -88.22, -84.42,
+     -76.76, -91.98, -82.52, -82.38, -86.03, -83.03, -75.17, -80.06,
+     -84.77, -72.67, -70.51, -74.03, -70.15, -68.45, -79.72, -72.03,
+     -70.55, -70.35, -75.53, -73.56, -68.56, -71.67, -66.93, -69.75,
+     -65.72, -65.86, -67.00, -64.22, -65.85, -68.35, -70.09, -67.21,
+     -66.80, -66.03, -63.87, -63.79, -64.09, -64.26, -63.22, -63.64,
+     -63.26, -62.62, -70.07, -69.37, -72.26, -70.92, -70.54, -71.71,
+     -81.77, -73.37, -70.46, -72.36, -74.42, -71.38, -78.58, -74.90,
+     -73.99, -72.40, -87.72, -62.96, -79.21, -64.00, -78.91, -71.58,
+     -98.03, -69.48, -75.89, -67.21, -85.18, -70.76, -89.96, -72.53,
+     -84.76, -81.48, -76.97, -73.20, -68.54, -60.17, -65.20, -65.26,
+     -65.20, -84.11, -68.25, -60.58, -67.87, -71.63, -66.01, -66.13,
+     -67.05, -68.27, -71.94, -78.66, -76.39, -88.92, -71.53, -75.77,
+     -69.36, -81.78, -83.58, -75.74, -75.96, -87.21, -75.33, -79.76,
+     -78.36, -81.78, -93.36, -88.21, -79.01, -75.39, -76.36, -74.34,
+     -72.68, -73.13, -73.12, -71.12, -74.62, -70.74, -70.57, -69.54,
+     -67.89, -69.52, -64.71, -66.60, -64.49])
+
+_T0_NYQ2_S21_DB = np.asarray([
+     -76.98, -85.66, -86.31, -91.85, -85.60, -90.78, -88.57, -85.13,
+     -79.53, -83.47, -87.43, -84.21, -81.63, -72.92, -78.65, -78.36,
+     -82.12, -78.01, -83.08, -80.36, -81.55, -74.62, -78.68, -81.52,
+     -75.98, -76.65, -74.95, -75.95, -72.77, -79.30, -81.28, -71.34,
+     -70.64, -67.00, -64.53, -60.62, -54.64, -49.55, -42.47, -34.08,
+     -23.59, -10.35, -7.49, -5.68, -5.17, -5.11, -4.70, -4.75, -4.98,
+     -4.86, -4.66, -4.55, -5.18, -4.70, -4.84, -4.62, -4.75, -4.93,
+     -4.85, -4.71, -4.80, -4.77, -5.09, -4.84, -4.93, -5.16, -5.02,
+     -5.37, -5.12, -5.15, -5.20, -5.27, -5.40, -5.35, -5.46, -5.55,
+     -5.58, -5.82, -5.84, -5.95, -6.07, -6.23, -6.45, -6.71, -7.01,
+     -7.48, -8.30, -9.47, -11.97, -19.30, -30.38, -38.37, -47.23,
+     -53.04, -60.04, -64.96, -65.62, -67.36, -65.19, -69.05, -68.31,
+     -66.01, -68.91, -63.64, -64.02, -62.55, -64.13, -60.89, -62.45,
+     -62.36, -61.74, -65.05, -63.76, -64.12, -65.00, -65.87, -69.23,
+     -64.16, -64.99, -63.64, -64.47, -66.07, -65.25, -66.84, -72.83,
+     -73.61, -70.68, -70.87, -73.77, -87.76, -82.13, -69.75, -74.95,
+     -66.17, -75.31, -65.48, -68.17, -62.82, -64.68, -64.69, -73.74,
+     -62.12, -70.62, -67.74, -66.01, -74.75, -66.38, -68.70, -64.69,
+     -65.20, -65.21, -64.75, -66.44, -64.29, -70.63, -70.97, -55.12,
+     -59.93, -54.90, -59.89, -52.83, -51.81, -49.11, -45.54, -44.62,
+     -48.34, -52.30, -57.76, -58.23, -62.14, -67.64, -70.11, -69.17,
+     -53.00, -58.93, -58.35, -61.76, -63.13, -62.89, -66.83, -65.01,
+     -64.00, -68.36, -65.47, -71.15, -67.56, -70.37, -70.30, -70.59,
+     -71.76, -66.59, -61.78, -53.52, -49.21, -41.72, -39.00, -37.18,
+     -40.57, -43.30, -44.63, -48.69])
+
+_T0_NYQ3_S21_DB = np.asarray([
+     -80.98, -81.21, -88.14, -82.42, -87.88, -79.64, -91.57, -82.91,
+     -75.57, -82.33, -82.18, -76.18, -82.38, -80.46, -77.81, -82.73,
+     -82.42, -75.66, -96.16, -71.07, -89.39, -97.37, -86.61, -76.27,
+     -89.65, -80.54, -84.08, -77.99, -88.41, -83.81, -94.76, -95.49,
+     -90.20, -94.06, -78.37, -81.79, -88.39, -84.64, -101.25, -81.30,
+     -84.00, -86.82, -96.26, -84.72, -86.27, -80.78, -83.17, -85.02,
+     -94.34, -85.22, -80.89, -79.56, -85.45, -84.63, -87.76, -85.13,
+     -95.79, -92.45, -83.69, -81.79, -75.07, -78.33, -74.00, -75.67,
+     -75.09, -71.15, -78.41, -69.84, -72.13, -69.35, -69.80, -69.47,
+     -75.44, -67.66, -68.12, -68.44, -69.65, -66.01, -67.13, -67.00,
+     -68.14, -67.12, -68.37, -68.72, -68.75, -70.32, -68.22, -67.10,
+     -64.55, -63.37, -62.29, -59.55, -52.47, -43.26, -30.45, -30.71,
+     -28.98, -21.56, -13.57, -12.35, -10.92, -8.77, -7.31, -8.14,
+     -7.18, -6.57, -7.00, -6.71, -7.60, -6.48, -6.17, -6.45, -6.51,
+     -7.37, -6.98, -6.92, -6.26, -5.90, -6.44, -6.53, -6.94, -7.02,
+     -6.38, -6.45, -6.12, -6.47, -7.32, -7.38, -8.21, -7.53, -7.69,
+     -6.77, -6.46, -6.42, -6.28, -6.83, -6.63, -6.78, -6.63, -6.38,
+     -6.52, -6.61, -6.67, -7.22, -6.76, -7.29, -6.77, -7.04, -7.01,
+     -7.20, -7.49, -7.64, -7.89, -7.96, -8.02, -8.88, -9.09, -11.83,
+     -10.98, -13.34, -11.81, -15.70, -19.93, -24.05, -26.05, -26.80,
+     -28.80, -37.96, -43.55, -51.36, -52.60, -57.78, -59.82, -59.71,
+     -65.18, -65.64, -67.21, -69.91, -67.36, -74.57, -73.61, -84.36,
+     -84.02, -78.32, -78.82, -79.32, -71.66, -76.53, -74.01, -72.49,
+     -76.92, -77.97, -77.19, -78.57, -71.17, -70.99, -67.09, -67.73,
+     -63.76, -62.12, -61.65])
+
+
+class _T0BandDefiningFilter(_InterpolatedFilter):
+    """
+    Shared notes for the three t0 band-defining filters.
+
+    These are the only models here built from a measurement of a specific unit
+    rather than from a vendor's published typical, and they read differently
+    because of it. What is tabulated is one trace off one filter on one day -
+    the ``-a`` in each filename is the unit - so it carries that unit's ripple
+    and that measurement's noise, where a datasheet curve would have had both
+    averaged or idealised away. A second unit will not reproduce it point for
+    point.
+
+    Sweep: Siglent SHN914A, S21, 1 to 9 GHz in 40 MHz steps, 201 points,
+    2026-09-12. The files also hold S21 phase, which nothing here models.
+
+    Two limits of the measurement bound every one of these models, and both
+    matter more than the numbers suggest:
+
+    * **The stopband is the instrument's floor, not the filter's rejection.**
+      Out of band these traces sit at -65 to -90 dB scattering by 15 dB between
+      neighbouring points, with phase uniform over the full circle - which is
+      what a VNA writes down when it is measuring its own dynamic range. Read
+      any of it as "below -60 dB and not resolved", never as the specific
+      figure tabulated. Nothing in a cascade turns on the difference, since a
+      stage 60 dB down has already left the budget, but the numbers are not
+      measurements of the part and should not be quoted as though they were.
+    * **The sweep starts at 1 GHz**, which is inside the passband for the
+      Nyquist 1 filter, so the bottom third of zone 1 is unswept. That one is a
+      low pass and is flat to DC, which is asserted rather than measured; see
+      that class.
+
+    Outside the sweep these hold the edge value rather than extending the
+    endpoint slope, which is the one place they depart from the vendor filters
+    and is a consequence of the two limits above. A vendor table ends on an
+    exact number partway down a real skirt, so its endpoint slope means
+    something and extending it is an estimate. These traces end in noise at
+    both ends, so the endpoint slope is whatever two neighbouring random points
+    happened to do, and extending it produces confident nonsense: doing so has
+    the Nyquist 2 model report 0 dB at DC - deep in its stopband, with the
+    slope running up into the passband ceiling - and the Nyquist 1 model
+    report -12 dB at 10 GHz, both the direction of error that flatters a
+    budget.
+
+    Holding the edge says the only thing a sweep supports about where it
+    stopped: this is what the filter was doing when the measurement ended. It
+    is still continuous at the band edge, still flagged as outside the measured
+    span, and still bounded by the filter rule - but it is a weaker claim than
+    the vendor models make there, deliberately. The 0 dB ceiling that suits a
+    low pass tabulated from 50 MHz is actively wrong for a band pass whose
+    region beyond the table is stopband, and rather than reason about which of
+    these three is which, none of them guesses.
+    """
+
+    def gain(self, carrier_frequency):
+        """Tabulated loss inside the sweep; the edge value held outside it."""
+        low, high = self._span_hz
+        held = np.clip(np.asarray(carrier_frequency, dtype=float), low, high)
+        return super().gain(held)
+
+
+@register("filter.t0_banddef_nyq1", category="Filters",
+          label="t0 band-def. Nyquist 1")
+class T0_BandDef_Nyquist1(_T0BandDefiningFilter):
+    """
+    t0 band-defining filter for Nyquist zone 1, DC-2.5 GHz at 5 GSa/s.
+
+    A low pass in behaviour: flat at -2.1 dB mean from the bottom of the sweep
+    to 1.6 GHz, 0.89 dB of ripple over that window, then rolling off through
+    -3 dB at 2.28 GHz to -29 dB at the 2.5 GHz zone edge and -49 dB half a GHz
+    past it. Of the three it has much the lowest insertion loss.
+
+    The sweep starts at 1 GHz with the filter already passing at -2.6 dB, so
+    the DC-to-1 GHz third of zone 1 is not in the file - but the part has no
+    low cutoff to find there. It is a low pass, its passband is flat to DC, and
+    the model holds -2.59 dB down to zero for that reason rather than because
+    the base class had nothing better to hold. That is the one number here
+    asserted from what the filter is rather than read off a trace, which is why
+    it is written down: a later sweep starting near DC would confirm it rather
+    than discover it.
+
+    The held value carries the measurement's own uncertainty even so. -2.59 dB
+    is the first swept point and it sits at the bottom of the mismatch ripple
+    described below, where the neighbouring points run to -1.77 dB, so the flat
+    region is better read as -2.1 dB with a few tenths either way. Holding the
+    endpoint keeps the model continuous at the band edge, which is worth more
+    than the tenth of a dB, but do not take the DC value as a measurement of
+    the passband level.
+
+    The first ten points are also worth knowing about before reading fine
+    structure into the passband: -2.59, -1.80, -2.66, -1.77, -2.52, -1.78 and
+    so on, alternating by most of a dB between neighbouring 40 MHz points and
+    damping out by 1.4 GHz. A period of 80 MHz is a standing wave on about two
+    metres of line, so that is a mismatch ripple in the measurement setup
+    rather than anything the filter does, and it is the reason the endpoint
+    slope here is meaningless.
+
+    Everything above 2.5 GHz is stopband and is at the instrument floor; see
+    the base class.
+
+    Source: component_references/bpnyq1-a.csv.
+    """
+
+    response = (_T0_BANDDEF_FREQ_HZ, _T0_NYQ1_S21_DB)
+
+
+@register("filter.t0_banddef_nyq2", category="Filters",
+          label="t0 band-def. Nyquist 2")
+class T0_BandDef_Nyquist2(_T0BandDefiningFilter):
+    """
+    t0 band-defining filter for Nyquist zone 2, 2.5-5 GHz at 5 GSa/s.
+
+    A band pass sitting inside its zone rather than filling it: -3 dB corners
+    at 2.68 and 4.40 GHz against zone edges at 2.5 and 5.0, so roughly 300 and
+    600 MHz of the zone are given up at the two ends to get the skirts. Mean
+    loss is -5.11 dB over the flat 2.8-4.2 GHz, with 1.53 dB of ripple - three
+    dB more loss than the Nyquist 1 filter for the same job.
+
+    Both skirts are steep and both are measured properly, unlike the Nyquist 1
+    filter's low edge: -50 dB by 2.5 GHz going down, -49 dB by 5.0 GHz going
+    up, so it rejects the neighbouring zones at the zone boundary itself.
+
+    It is also the one with visible re-entrance. Above 8.4 GHz the response
+    climbs back out of the noise floor to -37 dB at 8.84 GHz, 32 dB below its
+    own passband and climbing at the top of the sweep. Where that goes past
+    9 GHz is not measured, so a chain carrying real power near 9 GHz should not
+    assume this filter still rejects it.
+
+    Source: component_references/bpnyq2-a.csv.
+    """
+
+    response = (_T0_BANDDEF_FREQ_HZ, _T0_NYQ2_S21_DB)
+
+
+@register("filter.t0_banddef_nyq3", category="Filters",
+          label="t0 band-def. Nyquist 3")
+class T0_BandDef_Nyquist3(_T0BandDefiningFilter):
+    """
+    t0 band-defining filter for Nyquist zone 3, 5-7.5 GHz at 5 GSa/s.
+
+    A band pass with -3 dB corners at 5.04 and 7.20 GHz, which lines its lower
+    edge up with the 5 GHz zone boundary almost exactly and leaves 300 MHz at
+    the top. The most lossy and least flat of the three: -6.81 dB mean over
+    5.2-7.0 GHz with 2.31 dB of ripple, against -5.11 and 0.89 for the zones
+    below it. Insertion loss rising and flatness worsening with zone number is
+    the pattern across this set, and for a chain it means the stage in front of
+    the Nyquist 3 filter is doing more work than its counterpart in zone 1.
+
+    Its lower skirt is the one place to be careful: at 4.92 GHz, just 80 MHz
+    below the zone edge, it is still only 11 dB down, so it does not reject the
+    top of zone 2 the way the zone 2 filter rejects the bottom of zone 3.
+
+    Source: component_references/bpnyq3-a.csv.
+    """
+
+    response = (_T0_BANDDEF_FREQ_HZ, _T0_NYQ3_S21_DB)
+
 class _TemperatureSwitchedCable(_DatasheetSpan, PassiveComponent):
     """
     Shared implementation for cryogenic cables that carry separate warm and cold
