@@ -825,6 +825,132 @@ class ZX60_83LN_Splus(_InterpolatedLNA):
     )
 
 
+#: ZX60-14LN-S+ noise figure in dB at VDD = +6 V, from the swept typical
+#: performance table. Kept as the datasheet quotes it; the class converts.
+_ZX60_14LN_NF_DB = np.asarray(
+    [1.81, 1.03, 1.07, 1.31, 1.22, 1.40, 1.40, 1.52, 1.71, 1.90, 2.20, 2.92,
+     3.62])
+
+
+@register("amplifier.zx60_14ln_s_plus", category="Amplifiers",
+          label="Mini-Circuits ZX60-14LN-S+")
+class ZX60_14LN_Splus(_InterpolatedLNA):
+    """
+    Room temperature low noise amplifier, 0.05-10 GHz, roughly 22 dB gain.
+
+    Mini-Circuits ZX60-14LN-S+ on its single +6 V supply, from the swept
+    "Typical Performance Data" table. Flat is the point of this part: 22.5 dB
+    at 500 MHz to 21.4 dB at 7 GHz, within a dB across seven octaves, before
+    it falls away to 18.2 dB at 10 GHz. Noise figure is 1.03 dB at 500 MHz and
+    under 2 dB to 7 GHz - 75 to 170 K equivalent - rising steeply past that to
+    3.62 dB at 10 GHz, which is 360 K.
+
+    Both ends of the band cost more than the headline suggests, and in
+    different ways. The 50 MHz point carries the worst noise figure below
+    8 GHz, 1.81 dB against 1.03 half a decade up, so the bottom of the band is
+    noisy while its gain is not. The top is the reverse and steeper: 8 to
+    10 GHz drops 2.4 dB of gain and adds 1.4 dB of noise figure together.
+
+    The swept table is used rather than the eight spot frequencies in the
+    electrical specifications, which agree with it to 0.02 dB wherever the two
+    share a frequency. The tabulated band, 50 MHz to 10 GHz, is the part's full
+    specified range, so nothing here is narrower than the datasheet.
+
+    Output P1dB (+15.9 to +22.9 dBm), OIP3 (+30.8 to +33.5 dBm), VSWR and the
+    0.6 W dissipation are on the datasheet and not here; nothing in this model
+    represents compression, intermodulation or matching.
+
+    Source: component_references/ZX60-14LN-S+.pdf, REV. OR, ECO-016347.
+    """
+
+    gain_response = (
+        1e6 * np.asarray([50, 500, 1000, 1600, 2000, 3000, 4000, 5000, 6000,
+                          7000, 8000, 9000, 10000]),
+        np.asarray([21.99, 22.49, 22.41, 22.25, 22.19, 22.06, 21.92, 21.79,
+                    21.61, 21.35, 20.62, 19.53, 18.21]),
+    )
+    # Same 13 frequencies as the gain: the table sweeps both together, so the
+    # noise curve spans the gain curve exactly and nothing is extended here.
+    noise_response = (
+        1e6 * np.asarray([50, 500, 1000, 1600, 2000, 3000, 4000, 5000, 6000,
+                          7000, 8000, 9000, 10000]),
+        290.0 * (10 ** (_ZX60_14LN_NF_DB / 10) - 1),
+    )
+
+
+#: ZX60-153LN-S+ noise figure in dB at VDD = +12 V, from the swept typical
+#: performance table. Kept as the datasheet quotes it; the class converts.
+#: The specification table's 15 GHz figure is deliberately not appended - see
+#: the class docstring.
+_ZX60_153LN_NF_DB = np.asarray(
+    [2.29, 2.21, 2.29, 2.23, 2.26, 2.41, 2.50, 2.49, 2.50, 2.49, 2.42, 2.72,
+     3.10])
+
+
+@register("amplifier.zx60_153ln_s_plus", category="Amplifiers",
+          label="Mini-Circuits ZX60-153LN-S+")
+class ZX60_153LN_Splus(_InterpolatedLNA):
+    """
+    Room temperature low noise amplifier, 0.5-15 GHz, roughly 17 dB gain.
+
+    Mini-Circuits ZX60-153LN-S+ on its +12 V supply. Half again the bandwidth
+    of the ZX60-14LN-S+ and reaching 15 GHz, paid for at both ends of the
+    ledger: 5 dB less gain, 19.2 dB at 600 MHz sloping to 14.6 dB at 14 GHz,
+    and a noise figure around 2.3-2.5 dB where the 14LN holds 1.0-1.9 over the
+    band they share. In noise temperature that is roughly 200-225 K against
+    75-160 K, so on the same chain this part costs about 100 K at the front.
+    What it buys is the 12-15 GHz decade the other one does not have.
+
+    Noise is unusually flat for a wideband MMIC - 2.21 dB at 500 MHz, 2.50 at
+    6 GHz, still 2.42 at 10 GHz - and only turns up in the last two rows, 2.72
+    at 12 GHz and 3.10 at 14 GHz. There is no quiet middle to aim a chain at
+    the way there is with the cryogenic parts here.
+
+    Two things about the span. The swept table starts at 200 MHz, below the
+    0.5 GHz the part is specified from, and that point is kept: it is measured
+    data, and ``defined_span_hz`` reports the range the curve is tabulated
+    over, not the range the vendor warrants. Read 200-500 MHz as real
+    measurement outside a specification rather than as an extrapolation.
+
+    At the other end the model stops at 14 GHz where the swept table does,
+    one GHz short of the band the part is sold over, and that shortfall is
+    deliberate. The specification table does give 15 GHz typicals - 14.9 dB
+    gain, 3.6 dB noise figure - and joining them on would cover the full band,
+    the way the LNC0.3_14B carries an estimated 0.3 GHz noise point rather than
+    narrow a part whose name is its band. The difference is which way the added
+    point errs. That one continues a measured slope and errs pessimistic; this
+    one would not. 14.9 dB at 15 GHz sits *above* the swept table's 14.63 dB at
+    14 GHz - not because the part recovers there but because the two tables
+    disagree by 0.3 dB, inside their mutual scatter - so joining them reverses
+    the sign of the band-edge slope. Since an extrapolation extends that slope,
+    the model would then climb with frequency past 15 GHz instead of rolling
+    off, reaching its gain ceiling somewhere out where the real part is long
+    finished. An out-of-band estimate that is too generous is the one kind this
+    library will not carry, so the 15 GHz points stay on the datasheet. A chain
+    that needs the top of this part's band wants its own measurement.
+
+    Output P1dB (+14.4 to +17.6 dBm), OIP3 (+27.1 to +32.8 dBm), the input VSWR
+    that reaches 4.4:1 at 15 GHz, and the directivity column are on the
+    datasheet and not here.
+
+    Source: component_references/ZX60-153LN-S+.pdf, REV. D, ECO-016183.
+    """
+
+    gain_response = (
+        1e6 * np.asarray([200, 500, 600, 1000, 2000, 3000, 4000, 5000, 6000,
+                          8000, 10000, 12000, 14000]),
+        np.asarray([18.39, 19.12, 19.16, 19.09, 18.70, 18.07, 17.40, 16.92,
+                    16.68, 16.28, 16.28, 16.18, 14.63]),
+    )
+    # Same 13 frequencies as the gain: the table sweeps both together, so the
+    # noise curve spans the gain curve exactly and nothing is extended here.
+    noise_response = (
+        1e6 * np.asarray([200, 500, 600, 1000, 2000, 3000, 4000, 5000, 6000,
+                          8000, 10000, 12000, 14000]),
+        290.0 * (10 ** (_ZX60_153LN_NF_DB / 10) - 1),
+    )
+
+
 class _InterpolatedFilter(_DatasheetSpan, PassiveComponent):
     """
     Shared implementation for the fixed filter models, high- and low-pass alike.
@@ -1297,9 +1423,52 @@ _ZN4PD_TOTAL_LOSS_DB = np.asarray([
 ])
 
 
+class _TotalLossSplitter(_DatasheetSpan, PassiveComponent):
+    """
+    Shared implementation for the splitter/combiner models.
+
+    Subclasses set ``total_loss``, a ``(frequencies_Hz, loss_dB)`` pair holding
+    the datasheet's own Total Loss - insertion loss with the 10*log10(N) of
+    splitting already in it - so nothing needs adding for the split. Where the
+    datasheet measures several arms, ``loss_dB`` is one column per arm and they
+    are averaged; where it publishes one, it is a plain column.
+
+    Every one of these is the loss along a single output arm and nothing else,
+    which is all a linear cascade can represent: SignalChain is a chain, so
+    there is nowhere to put the other N-1 ports. Read one as "the signal goes
+    into this splitter and I follow one output".
+
+    None of them contributes noise. The 10*log10(N) is power division rather
+    than dissipation, so the split itself is not a lossy process in the
+    thermodynamic sense, and no physical temperature is carried here to turn
+    the excess insertion loss above it into a thermal contribution either.
+    """
+
+    #: (frequencies_Hz, loss_dB) datasheet Total Loss, set by each subclass.
+    #: 2-D loss is one column per measured arm; 1-D is a single published arm.
+    total_loss = None
+
+    def __init__(self, name=None):
+        super().__init__(name=name, params={})
+        freqs, loss_db = self.total_loss
+        loss = np.asarray(loss_db, dtype=float)
+        # Averaged in dB, which is what "typical loss along an arm" means for
+        # figures that spread by a tenth of a dB; converting to power to average
+        # would move the result by far less than the unbalance it is
+        # summarising. Negated because gain() reports loss as negative gain.
+        if loss.ndim == 2:
+            loss = loss.mean(axis=1)
+        (self.loss_f, self._ceiling_db, self._span_hz) = _datasheet_curve(
+            np.asarray(freqs, dtype=float), -loss)
+
+    def gain(self, carrier_frequency):
+        """Loss in dB from the input to one output, the split included."""
+        return np.minimum(self.loss_f(carrier_frequency), self._ceiling_db)
+
+
 @register("splitter.zn4pd_4r722_plus", category="Splitters",
           label="Mini-Circuits ZN4PD-4R722+ (one arm)")
-class ZN4PD_4R722plus(_DatasheetSpan, PassiveComponent):
+class ZN4PD_4R722plus(_TotalLossSplitter):
     """
     Mini-Circuits ZN4PD-4R722+ 4-way 0 degree splitter/combiner, 400-7200 MHz.
 
@@ -1331,19 +1500,127 @@ class ZN4PD_4R722plus(_DatasheetSpan, PassiveComponent):
     ECO-011123.
     """
 
-    def __init__(self, name=None):
-        super().__init__(name=name, params={})
-        # Negated because gain() reports loss as negative gain, and averaged in
-        # dB, which is what "typical loss along an arm" means for figures that
-        # spread by a tenth of a dB; converting to power to average would move
-        # the result by far less than the unbalance it is summarising.
-        mean_loss_db = -_ZN4PD_TOTAL_LOSS_DB.mean(axis=1)
-        (self.loss_f, self._ceiling_db,
-         self._span_hz) = _datasheet_curve(_ZN4PD_FREQ_HZ, mean_loss_db)
+    total_loss = (_ZN4PD_FREQ_HZ, _ZN4PD_TOTAL_LOSS_DB)
 
-    def gain(self, carrier_frequency):
-        """Loss in dB from the input to one output, the 6 dB split included."""
-        return np.minimum(self.loss_f(carrier_frequency), self._ceiling_db)
+
+#: ZN8PD-02183+ Total Loss in dB, one column per measured output arm - S-1,
+#: S-2, S-3, S-4, S-6, S-8 - against _ZN8PD_FREQ_HZ. Six of the eight arms are
+#: what the datasheet publishes; ports 5 and 7 are not tabulated. Total Loss
+#: here is insertion loss with the 9 dB of splitting already included.
+_ZN8PD_FREQ_HZ = 1e6 * np.asarray(
+    [2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 12000, 14000,
+     15000, 16000, 17000, 18000])
+_ZN8PD_TOTAL_LOSS_DB = np.asarray([
+    [9.34, 9.34, 9.35, 9.34, 9.33, 9.33],
+    [9.50, 9.51, 9.51, 9.51, 9.50, 9.49],
+    [9.56, 9.57, 9.58, 9.58, 9.56, 9.56],
+    [9.56, 9.57, 9.58, 9.59, 9.56, 9.58],
+    [9.69, 9.70, 9.70, 9.69, 9.68, 9.68],
+    [9.75, 9.76, 9.76, 9.75, 9.74, 9.74],
+    [9.79, 9.80, 9.82, 9.79, 9.78, 9.77],
+    [9.86, 9.85, 9.87, 9.86, 9.82, 9.81],
+    [9.98, 9.93, 9.93, 9.92, 9.93, 9.90],
+    [10.17, 10.11, 10.19, 10.13, 10.09, 10.05],
+    [10.18, 10.14, 10.19, 10.15, 10.12, 10.09],
+    [10.26, 10.21, 10.27, 10.28, 10.19, 10.17],
+    [10.44, 10.34, 10.39, 10.38, 10.32, 10.26],
+    [10.47, 10.38, 10.46, 10.42, 10.33, 10.25],
+    [10.72, 10.55, 10.70, 10.62, 10.53, 10.40],
+])
+
+
+@register("splitter.zn8pd_02183_plus", category="Splitters",
+          label="Mini-Circuits ZN8PD-02183+ (one arm)")
+class ZN8PD_02183plus(_TotalLossSplitter):
+    """
+    Mini-Circuits ZN8PD-02183+ 8-way 0 degree splitter/combiner, 2-18 GHz.
+
+    Reactive, not resistive. The 9 dB the datasheet calls "splitter loss" is
+    10*log10(8), the ideal reactive figure; a resistive 8-way star would divide
+    at 20*log10(8) = 18 dB, and the measured Total Loss starts at 9.34 dB. The
+    20 dB isolation between outputs says the same thing from the other side -
+    a resistive star gives no isolation to speak of, and getting 20 dB takes
+    the isolation resistors of a Wilkinson - as does the separate 0.5 W
+    "Internal Dissipation" rating beside a 20 W input rating, which is what
+    those resistors are allowed to absorb. So the loss modelled here is
+    conductor and dielectric loss in a three-stage corporate network, not power
+    burned in a divider.
+
+    The loss is the datasheet's Total Loss, the 9 dB split already in it,
+    averaged across the six arms it tabulates. That is 9.34 dB at 2 GHz rising
+    to 10.6 dB at 18 GHz - so 0.3 to 1.6 dB of real insertion loss above the
+    split, against the 1.4 dB typical and 2.4 dB max its specification table
+    quotes over the whole band.
+
+    Six of the eight arms are published, S-1 through S-4 plus S-6 and S-8, and
+    they are averaged for the reason the ZN4PD's four are: they are arms of one
+    measured unit differing by the amplitude unbalance, here 0.00 to 0.17 dB,
+    so no arm is the right one to privilege. Ports 5 and 7 are not tabulated at
+    all, which is a gap in the datasheet rather than in this model.
+
+    Not represented, and on the datasheet: the 16-20 dB isolation between
+    outputs, the 0.3 dB amplitude and 5 degree phase unbalance, the fact that a
+    combiner sums eight inputs rather than dividing one, the 20 W splitter
+    rating and the 1.2 A DC-pass path.
+
+    Source: component_references/ZN8PD-02183+.pdf, REV. OR, M163108.
+    """
+
+    total_loss = (_ZN8PD_FREQ_HZ, _ZN8PD_TOTAL_LOSS_DB)
+
+
+#: ZC16PD-02183-S+ Total Loss in dB against _ZC16PD_FREQ_HZ. One column, S-1:
+#: unlike the other two splitters here the datasheet tabulates a single arm.
+#: Total Loss is insertion loss with the 12 dB of splitting already included.
+_ZC16PD_FREQ_HZ = 1e6 * np.asarray(
+    [2000, 3000, 4000, 5000, 6000, 7000, 8000, 10000, 12000, 14000, 16000,
+     18000])
+_ZC16PD_TOTAL_LOSS_DB = np.asarray(
+    [12.78, 13.00, 13.23, 13.40, 13.56, 13.75, 14.01, 14.30, 14.64, 14.95,
+     15.35, 15.72])
+
+
+@register("splitter.zc16pd_02183_s_plus", category="Splitters",
+          label="Mini-Circuits ZC16PD-02183-S+ (one arm)")
+class ZC16PD_02183_Splus(_TotalLossSplitter):
+    """
+    Mini-Circuits ZC16PD-02183-S+ 16-way 0 degree splitter/combiner, 2-18 GHz.
+
+    Reactive, not resistive, on the same evidence as the ZN8PD. Its 12 dB of
+    "splitter loss" is 10*log10(16), the ideal reactive figure, where a
+    resistive 16-way star would cost 20*log10(16) = 24 dB; measured Total Loss
+    starts at 12.78 dB. Isolation runs 24-37 dB, which needs isolation
+    resistors, and the ratings make those resistors explicit: 20 W in as a
+    splitter but 1.6 W of internal dissipation and only 1.6 W as a combiner.
+    That asymmetry is the Wilkinson signature - uncorrelated inputs to a
+    combiner land in the isolation resistors rather than in the sum port.
+
+    The loss is the datasheet's Total Loss, the 12 dB split already in it, 12.78
+    dB at 2 GHz rising to 15.72 dB at 18 GHz. That is 0.74 to 3.68 dB of
+    insertion loss above the split, and the frequency dependence is worth
+    reading before budgeting from the headline: the specification table quotes
+    1.4 dB typical over 2-8 GHz and 2.9 dB over 8-18 GHz, two figures for a
+    quantity that moves by a factor of five across the band.
+
+    Against the ZN8PD this part is the more lossy per arm in both terms - 3 dB
+    more of split, and about 2.4 times the excess loss above it at every
+    frequency the two share, from four stages of combining rather than three in
+    a longer package. A chain that needs only eight ways should not reach for
+    this one.
+
+    One arm is all the datasheet tabulates, S-1, so unlike the other two
+    splitters here nothing is averaged and this is a measurement of one port of
+    one unit. The amplitude unbalance it quotes, 0.06 to 0.24 dB, is the scale
+    on which the other fifteen differ from it.
+
+    Not represented, and on the datasheet: the 24-37 dB isolation, the
+    amplitude and phase unbalance, combining rather than splitting, the 20 W
+    rating and the 510 mA DC-pass path.
+
+    Source: component_references/ZC16PD-02183-S+.pdf, REV. OR, ECO-004360.
+    """
+
+    total_loss = (_ZC16PD_FREQ_HZ, _ZC16PD_TOTAL_LOSS_DB)
 
 
 class _FormulaCable(_DatasheetSpan, PassiveComponent):
@@ -1523,3 +1800,63 @@ class LNF_C4_12A(_InterpolatedFilter):
              -0.32, -0.27, -0.26, -0.27, -0.31, -0.37, -0.39, -0.42, -0.51,
              -0.69, -0.98, -1.46, -2.10, -2.98, -5.76, -11.54, -17.67]),
     )
+
+
+@register("cable.rg223", category="Cables", label="RG223/U (room temp)",
+          params=(LENGTH_PARAM,))
+class SMA_RG223_cables(_FormulaCable):
+    """
+    McGill Microwave RG223, 50 ohm, double silver-plated copper braid, PE
+    dielectric, 5.40 mm PVC jacket, 66% velocity of propagation.
+
+    The coefficients are fitted here rather than published. Unlike the RG316
+    this datasheet prints no loss formula, only eight attenuation rows from
+    50 MHz to 3 GHz, and the band of interest runs well past the last of them -
+    so the two-term form is fitted to the table and evaluated above it, which
+    keeps each loss mechanism's exponent wherever it lands instead of running a
+    table's endpoint slope out into a region where it means nothing. At 10 GHz
+    that is the difference between 1.69 dB/m and the 2.14 dB/m extending the
+    2-3 GHz slope would claim, and the gap widens with every GHz past it.
+
+    Read the fit as an estimate with a real error bar, because the table it
+    comes from is not self-consistent. Coax loss cannot grow more slowly than
+    sqrt(f) - that is conductor loss, and dielectric loss only steepens it -
+    and three of the seven intervals in this table do exactly that: 14 to
+    16 dB/100m from 50 to 100 MHz where sqrt alone demands 19.8, 16 to 28
+    across 100-400 MHz where it demands 32, and 37 to 44 across 500-900 where
+    it demands 49.6. Around a pure sqrt law anchored at 3 GHz the rows scatter
+    by -13% to +23%. This is a compiled or rounded table, not a measurement
+    series, and no choice of a and b can fit it.
+
+    What that costs: fitting all eight rows in absolute terms, as here, gives
+    1.69 dB/m at 10 GHz, while fitting only the 900 MHz-3 GHz rows - the part
+    that does obey the sqrt floor - gives 1.87. Treat anything above 3 GHz as
+    carrying 10-15% on top of whatever the fit says. Absolute least squares is
+    used deliberately rather than relative: it weights the large
+    high-frequency rows, which are both the self-consistent ones and the ones
+    that set the extrapolation. Fitting in log space instead lets the bad
+    50 MHz row pull the dielectric term negative, which would have loss turn
+    over and fall at high frequency.
+
+    The fit reproduces the rows that matter - 60.2 dB/100m at 1500 MHz against
+    59, 70.1 at 2000 against 70, 87.0 at 3000 against 88 - and understates the
+    50 MHz row, 10.5 against 14, which is the row that cannot be right.
+
+    Validated to 3 GHz, the top of the table, so that is what ``defined_span_hz``
+    reports and a sweep past it is flagged as an estimate like any other. The
+    datasheet's own 12.4 GHz "Max Frequency" is a different claim - the usable
+    limit of the cable, not a range over which its loss was characterised.
+
+    Not modelled: the 1400 V rating, the -20/+85 C range, the 100 pF/m
+    capacitance or the 66% velocity factor and the delay it implies. This is
+    loss against frequency and nothing else.
+
+    Source: component_references/rg223-data-sheet.pdf, McGill Microwave
+    Systems Ltd, part RG223 (undated).
+    """
+
+    # Least squares on all eight published rows, in dB/m against GHz; see the
+    # docstring for why absolute rather than relative, and for the error bar.
+    atten_a = 0.4647
+    atten_b = 0.0218
+    datasheet_fmax_ghz = 3.0
