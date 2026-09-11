@@ -68,6 +68,14 @@ python open_web_gui.py --desktop
 
 The menu launcher builds or updates the browser calculator when needed and opens it in your browser. **Network access is required on first launch** to download the Python runtime and dependencies. Subsequent loads may use the browser cache; a fully offline bundle is not implemented.
 
+### Updating
+
+```bash
+git pull
+```
+
+That is the whole procedure. The next start-menu launch compares the checkout against what the calculator was last built from and rebuilds the parts that changed — a few seconds — before opening the page; you do not need to re-run `--desktop` or rebuild by hand. If a rebuild cannot finish, the launcher says so in a dialog and writes what the build printed to `dist/last-build.log`.
+
 See [the browser guide](web/README.md) for build details.
 
 ## Using the browser

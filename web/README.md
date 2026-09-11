@@ -25,6 +25,12 @@ for when you care which of them ran.
 after which the calculator is double-clickable and appears in the applications
 menu. That file holds absolute paths, so it is generated rather than committed.
 
+The entry runs this same launcher, so `git pull` is the whole update procedure:
+the next launch rebuilds whatever the pull changed and then opens the page. A
+launch from the menu has no terminal, so there a failure is also shown in a
+dialog (zenity/kdialog/xmessage/notify-send, whichever exists) and the failing
+step's output is written to `dist/last-build.log`.
+
 ## Build
 
 ```bash
@@ -44,7 +50,9 @@ Rebuild only what you touched:
 
 `open_web_gui.py` decides that from mtimes, and takes the wheel's own contents
 as the list of sources for it — so adding a module to `py-modules` in
-`pyproject.toml` does not also have to be recorded in the launcher.
+`pyproject.toml` does not also have to be recorded in the launcher. It also
+compares the revision the page records against the one checked out now, which
+is the backstop for a pull that moved a source the table above does not name.
 
 ## How assembly works
 

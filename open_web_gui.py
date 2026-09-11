@@ -13,10 +13,19 @@ is the shortcut: one entry point that works out which stages are needed.
 Staleness is decided from mtimes, and the wheel's own contents decide what
 counts as a source for it — whatever .py files are inside the wheel are the ones
 compared against it. That way adding a module to `py-modules` in pyproject.toml
-does not also have to be recorded here.
+does not also have to be recorded here. The revision the page records is
+checked too, so a `git pull` rebuilds even if it moved a file no list here
+names: after pulling, launching is the whole update procedure.
+
+Launched from the desktop entry there is no terminal to print to, so in that
+case a failure is also shown in a dialog and the build output is kept in
+dist/last-build.log. Otherwise a double-click that cannot build looks exactly
+like a double-click that did nothing.
 """
 import argparse
 import os
+import re
+import shutil
 import subprocess
 import sys
 import webbrowser
@@ -26,6 +35,14 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 DIST = os.path.join(ROOT, 'dist')
 PAGE = os.path.join(DIST, 'analog_chain_calculator.html')
 ICON = os.path.join(ROOT, 'web', 'icon.svg')
+# Where a failing build step's output is kept, for the launches that have no
+# terminal to write it to.
+LOG = os.path.join(DIST, 'last-build.log')
+
+# Set in main(): true when this run has to report through the desktop rather
+# than through stdout. Module scope because run() is where failures surface.
+GUI = False
+ANNOUNCED = False
 
 # Sources for the assembly stage. The wheel is added at run time, since its
 # filename carries the version.
@@ -37,6 +54,71 @@ PAGE_SOURCES = [
 ]
 
 
+def desktop_launch():
+    """True when this run has no terminal to print to but does have a desktop
+    to put a window on — which is what being started from the applications
+    menu looks like from in here."""
+    return not sys.stdout.isatty() and bool(
+        os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY'))
+
+
+def first_available(*commands):
+    """Run the first of these command lines whose program is installed. None of
+    them is required: they are how the machine happens to show messages, and a
+    machine that shows none still has stdout and the log file."""
+    for argv in commands:
+        if shutil.which(argv[0]):
+            subprocess.run(argv, capture_output=True)
+            return True
+    return False
+
+
+def show_error(message):
+    # 'see above' is the right thing to say to a terminal and a dead end in a
+    # dialog, where the only 'above' the reader has is the log file.
+    body = message.replace('see above', 'see the log below') + \
+        f'\n\nBuild output: {LOG}'
+    first_available(
+        ['zenity', '--error', '--no-wrap', '--title', 'Analog Chain Calculator',
+         '--text', body],
+        ['kdialog', '--title', 'Analog Chain Calculator', '--error', body],
+        ['xmessage', '-center', f'Analog Chain Calculator\n\n{body}'],
+        ['notify-send', '-u', 'critical', 'Analog Chain Calculator', body],
+    )
+
+
+def announce_build():
+    """Say that a rebuild has started, once per run. Three seconds of nothing
+    after a double-click reads as a launcher that did not work, and the answer
+    people reach for is to double-click again."""
+    global ANNOUNCED
+    if GUI and not ANNOUNCED:
+        ANNOUNCED = True
+        first_available(['notify-send', '-t', '5000', '-i', ICON,
+                         'Analog Chain Calculator',
+                         'Updating to match your checkout…'])
+
+
+def git_sha():
+    """The revision checked out now, or None if git cannot say — an export with
+    no .git, say, which is then left to the mtime checks alone."""
+    try:
+        out = subprocess.run(['git', '-C', ROOT, 'describe', '--always', '--dirty'],
+                             capture_output=True, text=True, check=True)
+        return out.stdout.strip() or None
+    except (subprocess.CalledProcessError, OSError):
+        return None
+
+
+def page_sha():
+    """The revision the assembler recorded in the built page's config."""
+    if not os.path.exists(PAGE):
+        return None
+    with open(PAGE) as fh:
+        match = re.search(r'"git_sha":\s*"([^"]*)"', fh.read())
+    return match.group(1) if match and match.group(1) != 'unknown' else None
+
+
 def newer_than(target, sources):
     """Sources modified after target, as repo-relative paths."""
     if not os.path.exists(target):
@@ -46,16 +128,34 @@ def newer_than(target, sources):
             if os.path.exists(s) and os.path.getmtime(s) > cutoff]
 
 
+def wheel_paths():
+    return sorted(os.path.join(DIST, f) for f in os.listdir(DIST)
+                  if f.endswith('.whl')) if os.path.isdir(DIST) else []
+
+
 def find_wheel():
-    """The single wheel in dist/, or None. Several wheels is an error rather
-    than a guess: embedding the wrong version gives a page that works and
-    reports numbers from code you are not looking at."""
-    wheels = sorted(f for f in os.listdir(DIST) if f.endswith('.whl')) \
-        if os.path.isdir(DIST) else []
+    """The single wheel in dist/, or None. Several is still not a thing to
+    guess between — embedding the wrong version gives a page that works and
+    reports numbers from code you are not looking at — but by here one has just
+    been built and the rest pruned, so it is an invariant check."""
+    wheels = wheel_paths()
     if len(wheels) > 1:
-        sys.exit(f"several wheels in dist/ ({', '.join(wheels)}) — remove the "
-                 f"stale one, or run tools/assemble_web.py --wheel to choose")
-    return os.path.join(DIST, wheels[0]) if wheels else None
+        sys.exit(f"several wheels in dist/ "
+                 f"({', '.join(os.path.basename(w) for w in wheels)}) — remove "
+                 f"the stale one, or run tools/assemble_web.py --wheel to choose")
+    return wheels[0] if wheels else None
+
+
+def prune_wheels():
+    """Keep only the wheel just written. `pip wheel` writes a new file when the
+    version changes instead of replacing the old one, and find_wheel() refuses
+    to choose between two — so without this the first version bump after a pull
+    wedges every later launch, complaining to a terminal nobody is looking at.
+    Newest-by-mtime is the one pip just produced."""
+    wheels = sorted(wheel_paths(), key=os.path.getmtime)
+    for path in wheels[:-1]:
+        os.remove(path)
+        print(f'  removed superseded wheel {os.path.basename(path)}')
 
 
 def wheel_sources(wheel):
@@ -69,6 +169,7 @@ def wheel_sources(wheel):
 
 
 def run(step, argv):
+    announce_build()
     # Flushed, because the failure branch below writes the subprocess's
     # diagnostics to stderr and they have to land after this line, not before
     # it, when stdout is a pipe.
@@ -78,6 +179,9 @@ def run(step, argv):
         sys.stdout.write(result.stdout)
         sys.stdout.flush()
         sys.stderr.write(result.stderr)
+        os.makedirs(DIST, exist_ok=True)
+        with open(LOG, 'w') as fh:
+            fh.write(f"$ {' '.join(argv)}\n\n{result.stdout}\n{result.stderr}")
         sys.exit(f'\n{step} failed — see above. The documented manual build is '
                  f'in web/README.md.')
     return result.stdout
@@ -86,6 +190,7 @@ def run(step, argv):
 def build_wheel():
     run('building the wheel (pip wheel . --no-deps)',
         [sys.executable, '-m', 'pip', 'wheel', '.', '--no-deps', '-w', DIST])
+    prune_wheels()
     wheel = find_wheel()
     if wheel is None:
         sys.exit('pip reported success but wrote no wheel to dist/')
@@ -116,11 +221,16 @@ def install_desktop_entry():
                  f'Path={ROOT}\n'
                  f'Icon={ICON}\n'
                  'Terminal=false\n'
+                 # So the desktop shows the launch as pending while a rebuild
+                 # runs, instead of nothing happening for a few seconds.
+                 'StartupNotify=true\n'
                  'Categories=Science;Engineering;\n')
     os.chmod(path, 0o755)
     print(f'wrote {path}')
     print('  Launch it as "Analog Chain Calculator" from your applications '
           'menu, or double-click that file.')
+    print('  Only needed once: the entry runs this launcher, which rebuilds '
+          'whatever a `git pull` changed before opening the page.')
 
 
 def main():
@@ -133,15 +243,35 @@ def main():
                     help='install a desktop entry and exit')
     args = ap.parse_args()
 
+    global GUI
+    GUI = desktop_launch() and not args.no_open
+
     if args.desktop:
         install_desktop_entry()
         return
 
-    wheel = find_wheel()
-    if args.force or wheel is None:
+    # The revision the page was built from against the one checked out now.
+    # The mtime checks below catch an edited file, but they only compare the
+    # sources someone remembered to list; a pull is a whole-checkout change,
+    # so take a moved revision as stale regardless of what it touched.
+    revision, built_from = git_sha(), page_sha()
+    moved = (f'checkout is at {revision}, page was built from {built_from}'
+             if revision and built_from and revision != built_from else None)
+
+    # Several wheels means a version bump left the superseded one behind, from
+    # a build before prune_wheels() existed. Rebuilding settles it — pip writes
+    # the version the checkout asks for and the prune drops the others — which
+    # is better than stopping to ask, since the launch that has to ask is the
+    # one with no terminal to ask in.
+    wheels = wheel_paths()
+    if args.force or len(wheels) != 1:
+        if len(wheels) > 1:
+            print(f'  {len(wheels)} wheels in dist/ — rebuilding to settle '
+                  f'which one the checkout wants')
         wheel = build_wheel()
     else:
-        changed = newer_than(wheel, wheel_sources(wheel))
+        wheel = wheels[0]
+        changed = ([moved] if moved else []) + newer_than(wheel, wheel_sources(wheel))
         if changed:
             print(f'  wheel is stale ({", ".join(changed[:3])}'
                   f'{" +more" if len(changed) > 3 else ""})')
@@ -171,4 +301,11 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except SystemExit as exc:
+        # sys.exit(str) is how every failure above is reported. With no
+        # terminal that message is lost, so repeat it where it can be seen.
+        if GUI and isinstance(exc.code, str):
+            show_error(exc.code.strip())
+        raise
